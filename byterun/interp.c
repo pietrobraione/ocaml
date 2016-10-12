@@ -1117,12 +1117,6 @@ value caml_interprete(code_t prog, asize_t prog_size)
 
 /* Debugging and machine control */
 
-    Instruct(STOP):
-      caml_external_raise = initial_external_raise;
-      caml_extern_sp = sp;
-      caml_callback_depth--;
-      return accu;
-
     Instruct(EVENT):
       if (--caml_event_count == 0) {
         Setup_for_debugger;
@@ -1136,6 +1130,12 @@ value caml_interprete(code_t prog, asize_t prog_size)
       caml_debugger(BREAKPOINT);
       Restore_after_debugger;
       Restart_curr_instr;
+
+    Instruct(STOP):
+      caml_external_raise = initial_external_raise;
+      caml_extern_sp = sp;
+      caml_callback_depth--;
+      return accu;
 
 #ifndef THREADED_CODE
     default:
