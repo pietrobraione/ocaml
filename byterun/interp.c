@@ -35,6 +35,35 @@
 #include "caml/stacks.h"
 #include "caml/startup_aux.h"
 
+/* Redefinition of macros */
+#if defined(NATIVE_CODE) && defined(WITH_SPACETIME)
+extern uintnat caml_spacetime_my_profinfo(struct ext_table**, uintnat);
+#define _F_Alloc_small(result, wosize, tag) \
+  _F_Alloc_small_with_profinfo(result, wosize, tag, \
+    _F_caml_spacetime_my_profinfo(NULL, wosize))
+#else
+#define _F_Alloc_small(result, wosize, tag) \
+  _F_Alloc_small_with_profinfo(result, wosize, tag, (uintnat) 0)
+#endif
+#define _F_Alloc_small_with_profinfo(result, wosize, tag, profinfo) do {       \
+                                                CAMLassert ((wosize) >= 1); \
+                                          CAMLassert ((tag_t) (tag) < 256); \
+                                 CAMLassert ((wosize) <= Max_young_wosize); \
+  caml_young_ptr -= Whsize_wosize (wosize);                                 \
+  if (caml_young_ptr < caml_young_trigger){                                 \
+    caml_young_ptr += Whsize_wosize (wosize);                               \
+    CAML_INSTR_INT ("force_minor/alloc_small@", 1);                         \
+    Setup_for_gc;                                                           \
+    _F_caml_gc_dispatch ();                                                    \
+    Restore_after_gc;                                                       \
+    caml_young_ptr -= Whsize_wosize (wosize);                               \
+  }                                                                         \
+  Hd_hp (caml_young_ptr) =                                                  \
+    Make_header_with_profinfo ((wosize), (tag), Caml_black, profinfo);      \
+  (result) = Val_hp (caml_young_ptr);                                       \
+  DEBUG_clear ((result), (wosize));                                         \
+}while(0)
+
 /* Registers for the abstract machine:
         pc         the code pointer
         sp         the stack pointer (grows downward)
@@ -227,6 +256,24 @@ value caml_interprete(code_t prog, asize_t prog_size)
   static void * jumptable[] = {
 #    include "caml/jumptbl.h"
   };
+#endif
+
+  /* Pointers to functions */
+#if defined(NATIVE_CODE) && defined(WITH_SPACETIME)
+  uintnat (*_F_caml_spacetime_my_profinfo)(void) = caml_spacetime_my_profinfo;
+#endif
+  void    (*_F_caml_gc_dispatch)(void)           = caml_gc_dispatch;
+  value   (*_F_caml_alloc_shr)(mlsize_t, tag_t)  = caml_alloc_shr;
+  void    (*_F_caml_initialize)(value*, value)   = caml_initialize;
+  void    (*_F_caml_modify)(value*, value)       = caml_modify;
+  void    (*_F_caml_debugger)(enum event_kind)   = caml_debugger;
+  void    (*_F_caml_stash_backtrace)(value, code_t, value*, int)
+                                                 = caml_stash_backtrace;
+  void    (*_F_caml_realloc_stack)(asize_t)      = caml_realloc_stack;
+  void    (*_F_caml_process_event)(void)         = caml_process_event;
+  void    (*_F_caml_raise_zero_divide)(void)     = caml_raise_zero_divide;
+#ifdef CAML_TEST_CACHE
+  int     (*_F_fprintf)(FILE*, const char*, ...) = fprintf;
 #endif
 
   if (prog == NULL) {           /* Interpreter is initializing */
@@ -579,7 +626,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
       } else {
         mlsize_t num_args, i;
         num_args = 1 + extra_args; /* arg1 + extra args */
-        Alloc_small(accu, num_args + 2, Closure_tag);
+        _F_Alloc_small(accu, num_args + 2, Closure_tag);
         Field(accu, 1) = env;
         for (i = 0; i < num_args; i++) Field(accu, i + 2) = sp[i];
         Code_val(accu) = pc - 3; /* Point to the preceding RESTART instr. */
@@ -599,14 +646,14 @@ value caml_interprete(code_t prog, asize_t prog_size)
       if (nvars > 0) *--sp = accu;
       if (nvars < Max_young_wosize) {
         /* nvars + 1 <= Max_young_wosize, can allocate in minor heap */
-        Alloc_small(accu, 1 + nvars, Closure_tag);
+        _F_Alloc_small(accu, 1 + nvars, Closure_tag);
         for (i = 0; i < nvars; i++) Field(accu, i + 1) = sp[i];
       } else {
         /* PR#6385: must allocate in major heap */
         /* caml_alloc_shr and caml_initialize never trigger a GC,
            so no need to Setup_for_gc */
-        accu = caml_alloc_shr(1 + nvars, Closure_tag);
-        for (i = 0; i < nvars; i++) caml_initialize(&Field(accu, i + 1), sp[i]);
+        accu = _F_caml_alloc_shr(1 + nvars, Closure_tag);
+        for (i = 0; i < nvars; i++) _F_caml_initialize(&Field(accu, i + 1), sp[i]);
       }
       /* The code pointer is not in the heap, so no need to go through
          caml_initialize. */
@@ -625,16 +672,16 @@ value caml_interprete(code_t prog, asize_t prog_size)
       value * p;
       if (nvars > 0) *--sp = accu;
       if (blksize <= Max_young_wosize) {
-        Alloc_small(accu, blksize, Closure_tag);
+        _F_Alloc_small(accu, blksize, Closure_tag);
         p = &Field(accu, nfuncs * 2 - 1);
         for (i = 0; i < nvars; i++, p++) *p = sp[i];
       } else {
         /* PR#6385: must allocate in major heap */
         /* caml_alloc_shr and caml_initialize never trigger a GC,
            so no need to Setup_for_gc */
-        accu = caml_alloc_shr(blksize, Closure_tag);
+        accu = _F_caml_alloc_shr(blksize, Closure_tag);
         p = &Field(accu, nfuncs * 2 - 1);
-        for (i = 0; i < nvars; i++, p++) caml_initialize(p, sp[i]);
+        for (i = 0; i < nvars; i++, p++) _F_caml_initialize(p, sp[i]);
       }
       sp += nvars;
       /* The code pointers and infix headers are not in the heap,
@@ -725,7 +772,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
 
     Instruct(SETGLOBAL):
       ++pc;
-      caml_modify(&Field(caml_global_data, *pc), accu);
+      _F_caml_modify(&Field(caml_global_data, *pc), accu);
       accu = Val_unit;
       pc++;
       Next;
@@ -759,13 +806,13 @@ value caml_interprete(code_t prog, asize_t prog_size)
       mlsize_t i;
       value block;
       if (wosize <= Max_young_wosize) {
-        Alloc_small(block, wosize, tag);
+        _F_Alloc_small(block, wosize, tag);
         Field(block, 0) = accu;
         for (i = 1; i < wosize; i++) Field(block, i) = *sp++;
       } else {
-        block = caml_alloc_shr(wosize, tag);
-        caml_initialize(&Field(block, 0), accu);
-        for (i = 1; i < wosize; i++) caml_initialize(&Field(block, i), *sp++);
+        block = _F_caml_alloc_shr(wosize, tag);
+        _F_caml_initialize(&Field(block, 0), accu);
+        for (i = 1; i < wosize; i++) _F_caml_initialize(&Field(block, i), *sp++);
       }
       accu = block;
       Next;
@@ -774,7 +821,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
       ++pc;
       tag_t tag = *pc++;
       value block;
-      Alloc_small(block, 1, tag);
+      _F_Alloc_small(block, 1, tag);
       Field(block, 0) = accu;
       accu = block;
       Next;
@@ -783,7 +830,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
       ++pc;
       tag_t tag = *pc++;
       value block;
-      Alloc_small(block, 2, tag);
+      _F_Alloc_small(block, 2, tag);
       Field(block, 0) = accu;
       Field(block, 1) = sp[0];
       sp += 1;
@@ -794,7 +841,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
       ++pc;
       tag_t tag = *pc++;
       value block;
-      Alloc_small(block, 3, tag);
+      _F_Alloc_small(block, 3, tag);
       Field(block, 0) = accu;
       Field(block, 1) = sp[0];
       Field(block, 2) = sp[1];
@@ -808,9 +855,9 @@ value caml_interprete(code_t prog, asize_t prog_size)
       mlsize_t i;
       value block;
       if (size <= Max_young_wosize / Double_wosize) {
-        Alloc_small(block, size * Double_wosize, Double_array_tag);
+        _F_Alloc_small(block, size * Double_wosize, Double_array_tag);
       } else {
-        block = caml_alloc_shr(size * Double_wosize, Double_array_tag);
+        block = _F_caml_alloc_shr(size * Double_wosize, Double_array_tag);
       }
       Store_double_field(block, 0, Double_val(accu));
       for (i = 1; i < size; i++){
@@ -846,7 +893,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
     Instruct(GETFLOATFIELD): {
       ++pc;
       double d = Double_field(accu, *pc);
-      Alloc_small(accu, Double_wosize, Double_tag);
+      _F_Alloc_small(accu, Double_wosize, Double_tag);
       Store_double_val(accu, d);
       pc++;
       Next;
@@ -854,27 +901,27 @@ value caml_interprete(code_t prog, asize_t prog_size)
 
     Instruct(SETFIELD0):
       ++pc;
-      caml_modify(&Field(accu, 0), *sp++);
+      _F_caml_modify(&Field(accu, 0), *sp++);
       accu = Val_unit;
       Next;
     Instruct(SETFIELD1):
       ++pc;
-      caml_modify(&Field(accu, 1), *sp++);
+      _F_caml_modify(&Field(accu, 1), *sp++);
       accu = Val_unit;
       Next;
     Instruct(SETFIELD2):
       ++pc;
-      caml_modify(&Field(accu, 2), *sp++);
+      _F_caml_modify(&Field(accu, 2), *sp++);
       accu = Val_unit;
       Next;
     Instruct(SETFIELD3):
       ++pc;
-      caml_modify(&Field(accu, 3), *sp++);
+      _F_caml_modify(&Field(accu, 3), *sp++);
       accu = Val_unit;
       Next;
     Instruct(SETFIELD):
       ++pc;
-      caml_modify(&Field(accu, *pc), *sp++);
+      _F_caml_modify(&Field(accu, *pc), *sp++);
       accu = Val_unit;
       pc++;
       Next;
@@ -902,7 +949,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
       Next;
     Instruct(SETVECTITEM):
       ++pc;
-      caml_modify(&Field(accu, Long_val(sp[0])), sp[1]);
+      _F_caml_modify(&Field(accu, Long_val(sp[0])), sp[1]);
       accu = Val_unit;
       sp += 2;
       Next;
@@ -982,20 +1029,20 @@ value caml_interprete(code_t prog, asize_t prog_size)
 
     Instruct(RAISE_NOTRACE):
       ++pc;
-      if (caml_trapsp >= caml_trap_barrier) caml_debugger(TRAP_BARRIER);
+      if (caml_trapsp >= caml_trap_barrier) _F_caml_debugger(TRAP_BARRIER);
       goto raise_notrace;
 
     Instruct(RERAISE):
       ++pc;
-      if (caml_trapsp >= caml_trap_barrier) caml_debugger(TRAP_BARRIER);
-      if (caml_backtrace_active) caml_stash_backtrace(accu, pc, sp, 1);
+      if (caml_trapsp >= caml_trap_barrier) _F_caml_debugger(TRAP_BARRIER);
+      if (caml_backtrace_active) _F_caml_stash_backtrace(accu, pc, sp, 1);
       goto raise_notrace;
 
     Instruct(RAISE):
       ++pc;
     raise_exception:
-      if (caml_trapsp >= caml_trap_barrier) caml_debugger(TRAP_BARRIER);
-      if (caml_backtrace_active) caml_stash_backtrace(accu, pc, sp, 0);
+      if (caml_trapsp >= caml_trap_barrier) _F_caml_debugger(TRAP_BARRIER);
+      if (caml_backtrace_active) _F_caml_stash_backtrace(accu, pc, sp, 0);
     raise_notrace:
       if ((char *) caml_trapsp
           >= (char *) caml_stack_high - initial_sp_offset) {
@@ -1018,7 +1065,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
     check_stacks:
       if (sp < caml_stack_threshold) {
         caml_extern_sp = sp;
-        caml_realloc_stack(Stack_threshold / sizeof(value));
+        _F_caml_realloc_stack(Stack_threshold / sizeof(value));
         sp = caml_extern_sp;
       }
       goto check_signal;
@@ -1034,7 +1081,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
     process_signal:
       caml_something_to_do = 0;
       Setup_for_event;
-      caml_process_event();
+      _F_caml_process_event();
       Restore_after_event;
       Next;
 
@@ -1161,14 +1208,14 @@ value caml_interprete(code_t prog, asize_t prog_size)
     Instruct(DIVINT): {
       ++pc;
       intnat divisor = Long_val(*sp++);
-      if (divisor == 0) { Setup_for_c_call; caml_raise_zero_divide(); }
+      if (divisor == 0) { Setup_for_c_call; _F_caml_raise_zero_divide(); }
       accu = Val_long(Long_val(accu) / divisor);
       Next;
     }
     Instruct(MODINT): {
       ++pc;
       intnat divisor = Long_val(*sp++);
-      if (divisor == 0) { Setup_for_c_call; caml_raise_zero_divide(); }
+      if (divisor == 0) { Setup_for_c_call; _F_caml_raise_zero_divide(); }
       accu = Val_long(Long_val(accu) % divisor);
       Next;
     }
@@ -1270,7 +1317,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
 #ifdef CAML_TEST_CACHE
       static int calls = 0, hits = 0;
       if (calls >= 10000000) {
-        fprintf(stderr, "cache hit = %d%%\n", hits / 100000);
+        _F_fprintf(stderr, "cache hit = %d%%\n", hits / 100000);
         calls = 0; hits = 0;
       }
       calls++;
@@ -1326,7 +1373,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
       ++pc;
       if (--caml_event_count == 0) {
         Setup_for_debugger;
-        caml_debugger(EVENT_COUNT);
+        _F_caml_debugger(EVENT_COUNT);
         Restore_after_debugger;
       }
       Restart_curr_instr;
@@ -1334,7 +1381,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
     Instruct(BREAK):
       ++pc;
       Setup_for_debugger;
-      caml_debugger(BREAKPOINT);
+      _F_caml_debugger(BREAKPOINT);
       Restore_after_debugger;
       Restart_curr_instr;
 
