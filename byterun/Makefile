@@ -15,7 +15,7 @@
 
 include Makefile.shared
 
-CFLAGS=-DCAML_NAME_SPACE $(BYTECCCOMPOPTS) $(IFLEXDIR)
+CFLAGS=-DCAML_NAME_SPACE $(BYTECCCOMPOPTS) $(IFLEXDIR) -g
 DFLAGS=-DCAML_NAME_SPACE -g -DDEBUG $(BYTECCCOMPOPTS) $(IFLEXDIR)
 IFLAGS=$(CFLAGS) -DCAML_INSTR
 
@@ -85,7 +85,7 @@ clean::
 %.pic.o: %.c
 	$(CC) -c $(CFLAGS) $(SHAREDCCCOMPOPTS) $< -o $@
 
-depend : prims.c caml/opnames.h caml/jumptbl.h caml/version.h
+depend : prims.c caml/opnames.h caml/jumptbl.h caml/codetmpl_exit.h caml/version.h
 	-$(CC) -MM $(BYTECCCOMPOPTS) *.c > .depend
 	-$(CC) -MM $(BYTECCCOMPOPTS) -DDEBUG *.c | sed -e 's/\.o/.d.o/' \
 	       >> .depend

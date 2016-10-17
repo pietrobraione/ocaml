@@ -89,9 +89,11 @@ sp is a local copy of the global variable caml_extern_sp. */
 #  else
 #    define Next goto *(void *)(jumptbl_base + *pc)
 #  endif
+#  define InstructEnd(name) lbl_end_##name
 #else
 #  define Instruct(name) case name
 #  define Next break
+#  define InstructEnd(name)
 #endif
 
 /* GC interface */
@@ -219,6 +221,12 @@ sp is a local copy of the global variable caml_extern_sp. */
 static intnat caml_bcodcount;
 #endif
 
+/* Code templates for the jit compiler */
+#ifdef THREADED_CODE
+static void * *codetmpl_entry;
+static void * *codetmpl_exit;
+#endif
+
 /* The interpreter itself */
 
 value caml_interprete(code_t prog, asize_t prog_size)
@@ -256,6 +264,11 @@ value caml_interprete(code_t prog, asize_t prog_size)
   static void * jumptable[] = {
 #    include "caml/jumptbl.h"
   };
+  codetmpl_entry = jumptable;
+  static void * _codetmpl_exit[] = {
+#    include "caml/codetmpl_exit.h"
+  };
+  codetmpl_exit = _codetmpl_exit;
 #endif
 
   /* Pointers to functions */
@@ -346,87 +359,122 @@ value caml_interprete(code_t prog, asize_t prog_size)
     Instruct(ACC0):
       ++pc;
       accu = sp[0];
+    InstructEnd(ACC0):
       Next;
+
     Instruct(ACC1):
       ++pc;
       accu = sp[1];
+    InstructEnd(ACC1):
       Next;
+
     Instruct(ACC2):
       ++pc;
       accu = sp[2];
+    InstructEnd(ACC2):
       Next;
+
     Instruct(ACC3):
       ++pc;
       accu = sp[3];
+    InstructEnd(ACC3):
       Next;
+
     Instruct(ACC4):
       ++pc;
       accu = sp[4];
+    InstructEnd(ACC4):
       Next;
+
     Instruct(ACC5):
       ++pc;
       accu = sp[5];
+    InstructEnd(ACC5):
       Next;
+
     Instruct(ACC6):
       ++pc;
       accu = sp[6];
+    InstructEnd(ACC6):
       Next;
     Instruct(ACC7):
       ++pc;
       accu = sp[7];
+    InstructEnd(ACC7):
       Next;
 
     Instruct(PUSH): Instruct(PUSHACC0):
       ++pc;
       *--sp = accu;
+    InstructEnd(PUSH): InstructEnd(PUSHACC0):
       Next;
+
     Instruct(PUSHACC1):
       ++pc;
       *--sp = accu; accu = sp[1];
+    InstructEnd(PUSHACC1):
       Next;
+
     Instruct(PUSHACC2):
       ++pc;
       *--sp = accu; accu = sp[2];
+    InstructEnd(PUSHACC2):
       Next;
+
     Instruct(PUSHACC3):
       ++pc;
       *--sp = accu; accu = sp[3];
+    InstructEnd(PUSHACC3):
       Next;
+
     Instruct(PUSHACC4):
       ++pc;
       *--sp = accu; accu = sp[4];
+    InstructEnd(PUSHACC4):
       Next;
+
     Instruct(PUSHACC5):
       ++pc;
       *--sp = accu; accu = sp[5];
+    InstructEnd(PUSHACC5):
       Next;
+
     Instruct(PUSHACC6):
       ++pc;
       *--sp = accu; accu = sp[6];
+    InstructEnd(PUSHACC6):
       Next;
+
     Instruct(PUSHACC7):
       ++pc;
       *--sp = accu; accu = sp[7];
+    InstructEnd(PUSHACC7):
       Next;
 
     Instruct(PUSHACC):
       ++pc;
       *--sp = accu;
       accu = sp[*pc++];
+    InstructEnd(PUSHACC):
       Next;
+
     Instruct(ACC):
       ++pc;
       accu = sp[*pc++];
+    InstructEnd(ACC):
       Next;
 
     Instruct(POP):
       ++pc;
       sp += *pc++;
+    InstructEnd(POP):
       Next;
+
     Instruct(ASSIGN):
       ++pc;
       sp[*pc++] = accu;
       accu = Val_unit;
+    InstructEnd(ASSIGN):
       Next;
 
 /* Access in heap-allocated environment */
@@ -434,45 +482,62 @@ value caml_interprete(code_t prog, asize_t prog_size)
     Instruct(ENVACC1):
       ++pc;
       accu = Field(env, 1);
+    InstructEnd(ENVACC1):
       Next;
+
     Instruct(ENVACC2):
       ++pc;
       accu = Field(env, 2);
+    InstructEnd(ENVACC2):
       Next;
+
     Instruct(ENVACC3):
       ++pc;
       accu = Field(env, 3);
+    InstructEnd(ENVACC3):
       Next;
+
     Instruct(ENVACC4):
       ++pc;
       accu = Field(env, 4);
+    InstructEnd(ENVACC4):
       Next;
 
     Instruct(PUSHENVACC1):
       ++pc;
       *--sp = accu; accu = Field(env, 1);
+    InstructEnd(PUSHENVACC1):
       Next;
+
     Instruct(PUSHENVACC2):
       ++pc;
       *--sp = accu; accu = Field(env, 2);
+    InstructEnd(PUSHENVACC2):
       Next;
+
     Instruct(PUSHENVACC3):
       ++pc;
       *--sp = accu; accu = Field(env, 3);
+    InstructEnd(PUSHENVACC3):
       Next;
+
     Instruct(PUSHENVACC4):
       ++pc;
       *--sp = accu; accu = Field(env, 4);
+    InstructEnd(PUSHENVACC4):
       Next;
 
     Instruct(PUSHENVACC):
       ++pc;
       *--sp = accu;
       accu = Field(env, *pc++);
+    InstructEnd(PUSHENVACC):
       Next;
+
     Instruct(ENVACC):
       ++pc;
       accu = Field(env, *pc++);
+    InstructEnd(ENVACC):
       Next;
 
 /* Function application */
@@ -484,15 +549,19 @@ value caml_interprete(code_t prog, asize_t prog_size)
       sp[1] = env;
       sp[2] = Val_long(extra_args);
       pc++;
+    InstructEnd(PUSH_RETADDR):
       Next;
     }
+
     Instruct(APPLY): {
       ++pc;
       extra_args = *pc - 1;
       pc = Code_val(accu);
       env = accu;
+    InstructEnd(APPLY):
       goto check_stacks;
     }
+
     Instruct(APPLY1): {
       ++pc;
       value arg1 = sp[0];
@@ -504,8 +573,10 @@ value caml_interprete(code_t prog, asize_t prog_size)
       pc = Code_val(accu);
       env = accu;
       extra_args = 0;
+    InstructEnd(APPLY1):
       goto check_stacks;
     }
+
     Instruct(APPLY2): {
       ++pc;
       value arg1 = sp[0];
@@ -519,8 +590,10 @@ value caml_interprete(code_t prog, asize_t prog_size)
       pc = Code_val(accu);
       env = accu;
       extra_args = 1;
+    InstructEnd(APPLY2):
       goto check_stacks;
     }
+
     Instruct(APPLY3): {
       ++pc;
       value arg1 = sp[0];
@@ -536,6 +609,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
       pc = Code_val(accu);
       env = accu;
       extra_args = 2;
+    InstructEnd(APPLY3):
       goto check_stacks;
     }
 
@@ -553,8 +627,10 @@ value caml_interprete(code_t prog, asize_t prog_size)
       pc = Code_val(accu);
       env = accu;
       extra_args += nargs - 1;
+    InstructEnd(APPTERM):
       goto check_stacks;
     }
+
     Instruct(APPTERM1): {
       ++pc;
       value arg1 = sp[0];
@@ -562,8 +638,10 @@ value caml_interprete(code_t prog, asize_t prog_size)
       sp[0] = arg1;
       pc = Code_val(accu);
       env = accu;
+    InstructEnd(APPTERM1):
       goto check_stacks;
     }
+
     Instruct(APPTERM2): {
       ++pc;
       value arg1 = sp[0];
@@ -574,8 +652,10 @@ value caml_interprete(code_t prog, asize_t prog_size)
       pc = Code_val(accu);
       env = accu;
       extra_args += 1;
+    InstructEnd(APPTERM2):
       goto check_stacks;
     }
+
     Instruct(APPTERM3): {
       ++pc;
       value arg1 = sp[0];
@@ -588,6 +668,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
       pc = Code_val(accu);
       env = accu;
       extra_args += 2;
+    InstructEnd(APPTERM3):
       goto check_stacks;
     }
 
@@ -604,6 +685,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
         extra_args = Long_val(sp[2]);
         sp += 3;
       }
+    InstructEnd(RETURN):
       Next;
     }
 
@@ -615,6 +697,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
       for (i = 0; i < num_args; i++) sp[i] = Field(env, i + 2);
       env = Field(env, 1);
       extra_args += num_args;
+    InstructEnd(RESTART):
       Next;
     }
 
@@ -636,6 +719,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
         extra_args = Long_val(sp[2]);
         sp += 3;
       }
+    InstructEnd(GRAB):
       Next;
     }
 
@@ -660,6 +744,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
       Code_val(accu) = pc + *pc;
       pc++;
       sp += nvars;
+    InstructEnd(CLOSURE):
       Next;
     }
 
@@ -698,6 +783,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
         p++;
       }
       pc += nfuncs;
+    InstructEnd(CLOSUREREC):
       Next;
     }
 
@@ -705,37 +791,52 @@ value caml_interprete(code_t prog, asize_t prog_size)
       ++pc;
       *--sp = accu;
       accu = env + *pc++ * sizeof(value);
+    InstructEnd(PUSHOFFSETCLOSURE):
       Next;
+
     Instruct(OFFSETCLOSURE):
       ++pc;
       accu = env + *pc++ * sizeof(value);
+    InstructEnd(OFFSETCLOSURE):
       Next;
+
     Instruct(PUSHOFFSETCLOSUREM2):
       ++pc;
       *--sp = accu;
       accu = env - 2 * sizeof(value);
+    InstructEnd(PUSHOFFSETCLOSUREM2):
       Next;
+
     Instruct(OFFSETCLOSUREM2):
       ++pc;
       accu = env - 2 * sizeof(value);
+    InstructEnd(OFFSETCLOSUREM2):
       Next;
+
     Instruct(PUSHOFFSETCLOSURE0):
       ++pc;
       *--sp = accu;
       accu = env;
+    InstructEnd(PUSHOFFSETCLOSURE0):
       Next;
+
     Instruct(OFFSETCLOSURE0):
       ++pc;
       accu = env;
+    InstructEnd(OFFSETCLOSURE0):
       Next;
+
     Instruct(PUSHOFFSETCLOSURE2):
       ++pc;
       *--sp = accu;
       accu = env + 2 * sizeof(value);
+    InstructEnd(PUSHOFFSETCLOSURE2):
       Next;
+
     Instruct(OFFSETCLOSURE2):
       ++pc;
       accu = env + 2 * sizeof(value);
+    InstructEnd(OFFSETCLOSURE2):
       Next;
 
 
@@ -746,11 +847,14 @@ value caml_interprete(code_t prog, asize_t prog_size)
       *--sp = accu;
       accu = Field(caml_global_data, *pc);
       pc++;
+    InstructEnd(PUSHGETGLOBAL):
       Next;
+
     Instruct(GETGLOBAL):
       ++pc;
       accu = Field(caml_global_data, *pc);
       pc++;
+    InstructEnd(GETGLOBAL):
       Next;
 
     Instruct(PUSHGETGLOBALFIELD):
@@ -760,13 +864,16 @@ value caml_interprete(code_t prog, asize_t prog_size)
       pc++;
       accu = Field(accu, *pc);
       pc++;
+    InstructEnd(PUSHGETGLOBALFIELD):
       Next;
+
     Instruct(GETGLOBALFIELD): {
       ++pc;
       accu = Field(caml_global_data, *pc);
       pc++;
       accu = Field(accu, *pc);
       pc++;
+    InstructEnd(GETGLOBALFIELD):
       Next;
     }
 
@@ -775,6 +882,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
       _F_caml_modify(&Field(caml_global_data, *pc), accu);
       accu = Val_unit;
       pc++;
+    InstructEnd(SETGLOBAL):
       Next;
 
 /* Allocation of blocks */
@@ -783,20 +891,26 @@ value caml_interprete(code_t prog, asize_t prog_size)
       ++pc;
       *--sp = accu;
       accu = Atom(0);
+    InstructEnd(PUSHATOM0):
       Next;
+
     Instruct(ATOM0):
       ++pc;
       accu = Atom(0);
+    InstructEnd(ATOM0):
       Next;
 
     Instruct(PUSHATOM):
       ++pc;
       *--sp = accu;
       accu = Atom(*pc++);
+    InstructEnd(PUSHATOM):
       Next;
+
     Instruct(ATOM):
       ++pc;
       accu = Atom(*pc++);
+    InstructEnd(ATOM):
       Next;
 
     Instruct(MAKEBLOCK): {
@@ -815,8 +929,10 @@ value caml_interprete(code_t prog, asize_t prog_size)
         for (i = 1; i < wosize; i++) _F_caml_initialize(&Field(block, i), *sp++);
       }
       accu = block;
+    InstructEnd(MAKEBLOCK):
       Next;
     }
+
     Instruct(MAKEBLOCK1): {
       ++pc;
       tag_t tag = *pc++;
@@ -824,8 +940,10 @@ value caml_interprete(code_t prog, asize_t prog_size)
       _F_Alloc_small(block, 1, tag);
       Field(block, 0) = accu;
       accu = block;
+    InstructEnd(MAKEBLOCK1):
       Next;
     }
+
     Instruct(MAKEBLOCK2): {
       ++pc;
       tag_t tag = *pc++;
@@ -835,8 +953,10 @@ value caml_interprete(code_t prog, asize_t prog_size)
       Field(block, 1) = sp[0];
       sp += 1;
       accu = block;
+    InstructEnd(MAKEBLOCK2):
       Next;
     }
+
     Instruct(MAKEBLOCK3): {
       ++pc;
       tag_t tag = *pc++;
@@ -847,8 +967,10 @@ value caml_interprete(code_t prog, asize_t prog_size)
       Field(block, 2) = sp[1];
       sp += 2;
       accu = block;
+    InstructEnd(MAKEBLOCK3):
       Next;
     }
+
     Instruct(MAKEFLOATBLOCK): {
       ++pc;
       mlsize_t size = *pc++;
@@ -865,6 +987,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
         ++ sp;
       }
       accu = block;
+    InstructEnd(MAKEFLOATBLOCK):
       Next;
     }
 
@@ -873,29 +996,40 @@ value caml_interprete(code_t prog, asize_t prog_size)
     Instruct(GETFIELD0):
       ++pc;
       accu = Field(accu, 0);
+    InstructEnd(GETFIELD0):
       Next;
+
     Instruct(GETFIELD1):
       ++pc;
       accu = Field(accu, 1);
+    InstructEnd(GETFIELD1):
       Next;
+
     Instruct(GETFIELD2):
       ++pc;
       accu = Field(accu, 2);
+    InstructEnd(GETFIELD2):
       Next;
+
     Instruct(GETFIELD3):
       ++pc;
       accu = Field(accu, 3);
+    InstructEnd(GETFIELD3):
       Next;
+
     Instruct(GETFIELD):
       ++pc;
       accu = Field(accu, *pc); pc++;
+    InstructEnd(GETFIELD):
       Next;
+
     Instruct(GETFLOATFIELD): {
       ++pc;
       double d = Double_field(accu, *pc);
       _F_Alloc_small(accu, Double_wosize, Double_tag);
       Store_double_val(accu, d);
       pc++;
+    InstructEnd(GETFLOATFIELD):
       Next;
     }
 
@@ -903,34 +1037,45 @@ value caml_interprete(code_t prog, asize_t prog_size)
       ++pc;
       _F_caml_modify(&Field(accu, 0), *sp++);
       accu = Val_unit;
+    InstructEnd(SETFIELD0):
       Next;
+
     Instruct(SETFIELD1):
       ++pc;
       _F_caml_modify(&Field(accu, 1), *sp++);
       accu = Val_unit;
+    InstructEnd(SETFIELD1):
       Next;
+
     Instruct(SETFIELD2):
       ++pc;
       _F_caml_modify(&Field(accu, 2), *sp++);
       accu = Val_unit;
+    InstructEnd(SETFIELD2):
       Next;
+
     Instruct(SETFIELD3):
       ++pc;
       _F_caml_modify(&Field(accu, 3), *sp++);
       accu = Val_unit;
+    InstructEnd(SETFIELD3):
       Next;
+
     Instruct(SETFIELD):
       ++pc;
       _F_caml_modify(&Field(accu, *pc), *sp++);
       accu = Val_unit;
       pc++;
+    InstructEnd(SETFIELD):
       Next;
+
     Instruct(SETFLOATFIELD):
       ++pc;
       Store_double_field(accu, *pc, Double_val(*sp));
       accu = Val_unit;
       sp++;
       pc++;
+    InstructEnd(SETFLOATFIELD):
       Next;
 
 /* Array operations */
@@ -940,18 +1085,23 @@ value caml_interprete(code_t prog, asize_t prog_size)
       mlsize_t size = Wosize_val(accu);
       if (Tag_val(accu) == Double_array_tag) size = size / Double_wosize;
       accu = Val_long(size);
+    InstructEnd(VECTLENGTH):
       Next;
     }
+
     Instruct(GETVECTITEM):
       ++pc;
       accu = Field(accu, Long_val(sp[0]));
       sp += 1;
+    InstructEnd(GETVECTITEM):
       Next;
+
     Instruct(SETVECTITEM):
       ++pc;
       _F_caml_modify(&Field(accu, Long_val(sp[0])), sp[1]);
       accu = Val_unit;
       sp += 2;
+    InstructEnd(SETVECTITEM):
       Next;
 
 /* String operations */
@@ -960,12 +1110,15 @@ value caml_interprete(code_t prog, asize_t prog_size)
       ++pc;
       accu = Val_int(Byte_u(accu, Long_val(sp[0])));
       sp += 1;
+    InstructEnd(GETSTRINGCHAR):
       Next;
+
     Instruct(SETSTRINGCHAR):
       ++pc;
       Byte_u(accu, Long_val(sp[0])) = Int_val(sp[1]);
       sp += 2;
       accu = Val_unit;
+    InstructEnd(SETSTRINGCHAR):
       Next;
 
 /* Branches and conditional branches */
@@ -973,15 +1126,21 @@ value caml_interprete(code_t prog, asize_t prog_size)
     Instruct(BRANCH):
       ++pc;
       pc += *pc;
+    InstructEnd(BRANCH):
       Next;
+
     Instruct(BRANCHIF):
       ++pc;
       if (accu != Val_false) pc += *pc; else pc++;
+    InstructEnd(BRANCHIF):
       Next;
+
     Instruct(BRANCHIFNOT):
       ++pc;
       if (accu == Val_false) pc += *pc; else pc++;
+    InstructEnd(BRANCHIFNOT):
       Next;
+
     Instruct(SWITCH): {
       ++pc;
       uint32_t sizes = *pc++;
@@ -994,11 +1153,14 @@ value caml_interprete(code_t prog, asize_t prog_size)
         Assert ((uintnat) index < (sizes & 0xFFFF)) ;
         pc += pc[index];
       }
+    InstructEnd(SWITCH):
       Next;
     }
+
     Instruct(BOOLNOT):
       ++pc;
       accu = Val_not(accu);
+    InstructEnd(BOOLNOT):
       Next;
 
 /* Exceptions */
@@ -1012,6 +1174,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
       sp[3] = Val_long(extra_args);
       caml_trapsp = sp;
       pc++;
+    InstructEnd(PUSHTRAP):
       Next;
 
     Instruct(POPTRAP):
@@ -1025,17 +1188,20 @@ value caml_interprete(code_t prog, asize_t prog_size)
       }
       caml_trapsp = Trap_link(sp);
       sp += 4;
+    InstructEnd(POPTRAP):
       Next;
 
     Instruct(RAISE_NOTRACE):
       ++pc;
       if (caml_trapsp >= caml_trap_barrier) _F_caml_debugger(TRAP_BARRIER);
+    InstructEnd(RAISE_NOTRACE):
       goto raise_notrace;
 
     Instruct(RERAISE):
       ++pc;
       if (caml_trapsp >= caml_trap_barrier) _F_caml_debugger(TRAP_BARRIER);
       if (caml_backtrace_active) _F_caml_stash_backtrace(accu, pc, sp, 1);
+    InstructEnd(RERAISE):
       goto raise_notrace;
 
     Instruct(RAISE):
@@ -1058,6 +1224,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
       env = sp[2];
       extra_args = Long_val(sp[3]);
       sp += 4;
+    InstructEnd(RAISE):
       Next;
 
 /* Stack checks */
@@ -1076,6 +1243,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
       ++pc;
     check_signal:
       if (caml_something_to_do) goto process_signal;
+    InstructEnd(CHECK_SIGNALS):
       Next;
 
     process_signal:
@@ -1093,7 +1261,9 @@ value caml_interprete(code_t prog, asize_t prog_size)
       accu = Primitive(*pc)(accu);
       Restore_after_c_call;
       pc++;
+    InstructEnd(C_CALL1):
       Next;
+
     Instruct(C_CALL2):
       ++pc;
       Setup_for_c_call;
@@ -1101,7 +1271,9 @@ value caml_interprete(code_t prog, asize_t prog_size)
       Restore_after_c_call;
       sp += 1;
       pc++;
+    InstructEnd(C_CALL2):
       Next;
+
     Instruct(C_CALL3):
       ++pc;
       Setup_for_c_call;
@@ -1109,7 +1281,9 @@ value caml_interprete(code_t prog, asize_t prog_size)
       Restore_after_c_call;
       sp += 2;
       pc++;
+    InstructEnd(C_CALL3):
       Next;
+
     Instruct(C_CALL4):
       ++pc;
       Setup_for_c_call;
@@ -1117,7 +1291,9 @@ value caml_interprete(code_t prog, asize_t prog_size)
       Restore_after_c_call;
       sp += 3;
       pc++;
+    InstructEnd(C_CALL4):
       Next;
+
     Instruct(C_CALL5):
       ++pc;
       Setup_for_c_call;
@@ -1125,7 +1301,9 @@ value caml_interprete(code_t prog, asize_t prog_size)
       Restore_after_c_call;
       sp += 4;
       pc++;
+    InstructEnd(C_CALL5):
       Next;
+
     Instruct(C_CALLN): {
       ++pc;
       int nargs = *pc++;
@@ -1135,6 +1313,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
       Restore_after_c_call;
       sp += nargs;
       pc++;
+    InstructEnd(C_CALLN):
       Next;
     }
 
@@ -1143,35 +1322,49 @@ value caml_interprete(code_t prog, asize_t prog_size)
     Instruct(CONST0):
       ++pc;
       accu = Val_int(0);
+    InstructEnd(CONST0):
       Next;
+
     Instruct(CONST1):
       ++pc;
       accu = Val_int(1);
+    InstructEnd(CONST1):
       Next;
+
     Instruct(CONST2):
       ++pc;
       accu = Val_int(2);
+    InstructEnd(CONST2):
       Next;
+
     Instruct(CONST3):
       ++pc;
       accu = Val_int(3);
+    InstructEnd(CONST3):
       Next;
 
     Instruct(PUSHCONST0):
       ++pc;
       *--sp = accu; accu = Val_int(0);
+    InstructEnd(PUSHCONST0):
       Next;
+
     Instruct(PUSHCONST1):
       ++pc;
       *--sp = accu; accu = Val_int(1);
+    InstructEnd(PUSHCONST1):
       Next;
+
     Instruct(PUSHCONST2):
       ++pc;
       *--sp = accu; accu = Val_int(2);
+    InstructEnd(PUSHCONST2):
       Next;
+
     Instruct(PUSHCONST3):
       ++pc;
       *--sp = accu; accu = Val_int(3);
+    InstructEnd(PUSHCONST3):
       Next;
 
     Instruct(PUSHCONSTINT):
@@ -1179,11 +1372,14 @@ value caml_interprete(code_t prog, asize_t prog_size)
       *--sp = accu;
       accu = Val_int(*pc);
       pc++;
+    InstructEnd(PUSHCONSTINT):
       Next;
+
     Instruct(CONSTINT):
       ++pc;
       accu = Val_int(*pc);
       pc++;
+    InstructEnd(CONSTINT):
       Next;
 
 /* Integer arithmetic */
@@ -1191,18 +1387,25 @@ value caml_interprete(code_t prog, asize_t prog_size)
     Instruct(NEGINT):
       ++pc;
       accu = (value)(2 - (intnat)accu);
+    InstructEnd(NEGINT):
       Next;
+
     Instruct(ADDINT):
       ++pc;
       accu = (value)((intnat) accu + (intnat) *sp++ - 1);
+    InstructEnd(ADDINT):
       Next;
+
     Instruct(SUBINT):
       ++pc;
       accu = (value)((intnat) accu - (intnat) *sp++ + 1);
+    InstructEnd(SUBINT):
       Next;
+
     Instruct(MULINT):
       ++pc;
       accu = Val_long(Long_val(accu) * Long_val(*sp++));
+    InstructEnd(MULINT):
       Next;
 
     Instruct(DIVINT): {
@@ -1210,44 +1413,60 @@ value caml_interprete(code_t prog, asize_t prog_size)
       intnat divisor = Long_val(*sp++);
       if (divisor == 0) { Setup_for_c_call; _F_caml_raise_zero_divide(); }
       accu = Val_long(Long_val(accu) / divisor);
+    InstructEnd(DIVINT):
       Next;
     }
+
     Instruct(MODINT): {
       ++pc;
       intnat divisor = Long_val(*sp++);
       if (divisor == 0) { Setup_for_c_call; _F_caml_raise_zero_divide(); }
       accu = Val_long(Long_val(accu) % divisor);
+    InstructEnd(MODINT):
       Next;
     }
+
     Instruct(ANDINT):
       ++pc;
       accu = (value)((intnat) accu & (intnat) *sp++);
+    InstructEnd(ANDINT):
       Next;
+
     Instruct(ORINT):
       ++pc;
       accu = (value)((intnat) accu | (intnat) *sp++);
+    InstructEnd(ORINT):
       Next;
+
     Instruct(XORINT):
       ++pc;
       accu = (value)(((intnat) accu ^ (intnat) *sp++) | 1);
+    InstructEnd(XORINT):
       Next;
+
     Instruct(LSLINT):
       ++pc;
       accu = (value)((((intnat) accu - 1) << Long_val(*sp++)) + 1);
+    InstructEnd(LSLINT):
       Next;
+
     Instruct(LSRINT):
       ++pc;
       accu = (value)((((uintnat) accu - 1) >> Long_val(*sp++)) | 1);
+    InstructEnd(LSRINT):
       Next;
+
     Instruct(ASRINT):
       ++pc;
       accu = (value)((((intnat) accu - 1) >> Long_val(*sp++)) | 1);
+    InstructEnd(ASRINT):
       Next;
 
 #define Integer_comparison(typ,opname,tst) \
     Instruct(opname): \
       ++pc; \
       accu = Val_int((typ) accu tst (typ) *sp++); \
+    InstructEnd(opname): \
       Next;
 
     Integer_comparison(intnat,EQ, ==)
@@ -1267,6 +1486,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
       } else { \
         pc++ ; \
       } ; \
+    InstructEnd(opname): \
       Next;
 
     Integer_branch_comparison(intnat,BEQ, ==, "==")
@@ -1282,16 +1502,21 @@ value caml_interprete(code_t prog, asize_t prog_size)
       ++pc;
       accu += *pc << 1;
       pc++;
+    InstructEnd(OFFSETINT):
       Next;
+
     Instruct(OFFSETREF):
       ++pc;
       Field(accu, 0) += *pc << 1;
       accu = Val_unit;
       pc++;
+    InstructEnd(OFFSETREF):
       Next;
+
     Instruct(ISINT):
       ++pc;
       accu = Val_long(accu & 1);
+    InstructEnd(ISINT):
       Next;
 
 /* Object-oriented operations */
@@ -1305,6 +1530,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
     Instruct(GETMETHOD):
       ++pc;
       accu = Lookup(sp[0], accu);
+    InstructEnd(GETMETHOD):
       Next;
 
 #define CAML_METHOD_CACHE
@@ -1343,6 +1569,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
         accu = Field (meths, li-1);
       }
       pc++;
+    InstructEnd(GETPUBMET):
       Next;
     }
 #else
@@ -1364,6 +1591,10 @@ value caml_interprete(code_t prog, asize_t prog_size)
         else li = mi;
       }
       accu = Field (meths, li-1);
+    InstructEnd(GETDYNMET):
+#ifndef CAML_METHOD_CACHE
+    InstructEnd(GETPUBMET):
+#endif
       Next;
     }
 
@@ -1376,6 +1607,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
         _F_caml_debugger(EVENT_COUNT);
         Restore_after_debugger;
       }
+    InstructEnd(EVENT):
       Restart_curr_instr;
 
     Instruct(BREAK):
@@ -1383,6 +1615,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
       Setup_for_debugger;
       _F_caml_debugger(BREAKPOINT);
       Restore_after_debugger;
+    InstructEnd(BREAK):
       Restart_curr_instr;
 
     Instruct(STOP):

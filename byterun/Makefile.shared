@@ -133,11 +133,17 @@ caml/jumptbl.h : caml/instruct.h
 	sed -n -e '/^  /s/ \([A-Z]\)/ \&\&lbl_\1/gp' \
 	       -e '/^}/q' caml/instruct.h > caml/jumptbl.h
 
+# caml/codetmpl_exit.h is required only if you have GCC 2.0 or later
+caml/codetmpl_exit.h : caml/instruct.h
+	sed -n -e '/^  /s/ \([A-Z]\)/ \&\&lbl_end_\1/gp' \
+	       -e '/^}/q' caml/instruct.h  | \
+	sed -e 's/\&\&lbl_end_STOP/\&caml_prepare_bytecode/g' > caml/codetmpl_exit.h
+
 caml/version.h : ../VERSION ../tools/make-version-header.sh
 	../tools/make-version-header.sh ../VERSION > caml/version.h
 
 clean ::
 	rm -f ocamlrun$(EXE) ocamlrund$(EXE) *.$(O) *.$(A) *.$(SO)
-	rm -f primitives prims.c caml/opnames.h caml/jumptbl.h ld.conf
+	rm -f primitives prims.c caml/opnames.h caml/jumptbl.h caml/codetmpl_exit.h ld.conf
 	rm -f caml/version.h
 .PHONY: clean
