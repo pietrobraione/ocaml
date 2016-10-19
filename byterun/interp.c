@@ -229,13 +229,25 @@ static intnat caml_bcodcount;
 /* These are set by fix_code.c/startup.c */
 code_t jit_saved_code;
 asize_t jit_saved_code_len;
-/* These are local */
+/* These are local: Code templates stuff */
 static void * *codetmpl_entry;
 static void * *codetmpl_exit;
+static void *check_stacks_entry;
+static void *check_stacks_exit;
+static void *process_signal_entry;
+static void *process_signal_exit;
+static void *perform_return_entry;
+static void *perform_return_exit;
 static void *trampoline_internal_entry;
 static void *trampoline_internal_exit;
-static void* *tgt_table;
+static void *POPTRAP_trampoline_entry;
+static void *POPTRAP_trampoline_exit;
+static void *RAISE_trampoline_entry;
+static void *RAISE_trampoline_exit;
 static long max_template_size;
+/* (local) target table */
+static void* *tgt_table;
+/* (local) the compiled binary code */
 static void *binary = 0;
 #endif
 
@@ -268,6 +280,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
   struct caml__roots_block * volatile initial_local_roots;
   volatile code_t saved_pc = NULL;
   struct longjmp_buffer raise_buf;
+  int raise_shall_return;
 #ifndef THREADED_CODE
   opcode_t curr_instr;
 #endif
@@ -281,9 +294,20 @@ value caml_interprete(code_t prog, asize_t prog_size)
 #    include "caml/codetmpl_exit.h"
   };
   codetmpl_exit = _codetmpl_exit;
+  check_stacks_entry = &&check_stacks;
+  check_stacks_exit = &&InstructEnd(CHECK_SIGNALS);
+  process_signal_entry = &&process_signal;
+  process_signal_exit = &&InstructEnd(CHECK_SIGNALS);
+  perform_return_entry = &&perform_return;
+  perform_return_exit = &caml_prepare_bytecode;
   trampoline_internal_entry = &&lbl_trampoline_internal;
-  trampoline_internal_exit = &&lbl_trampoline_internal_end;
+  trampoline_internal_exit = &&lbl_end_trampoline_internal;
+  POPTRAP_trampoline_entry = &&lbl_POPTRAP_trampoline;
+  POPTRAP_trampoline_exit = &&lbl_end_POPTRAP_trampoline;
+  RAISE_trampoline_entry = &&lbl_RAISE_trampoline;
+  RAISE_trampoline_exit = &&lbl_end_RAISE_trampoline;
 
+  /* local copy that can be used in inline assembly */
   void* *_tgt_table = tgt_table;
 #endif
 
@@ -397,11 +421,24 @@ value caml_interprete(code_t prog, asize_t prog_size)
     switch(curr_instr) {
 #endif
 
+#define Dispatch asm volatile("jmp *%0" : : "r" (_tgt_table[pc - prog]));
+
 /* Unreachable operations used as templates for jit compilation */
     lbl_trampoline_internal:
-      asm volatile("jmp *%0" : : "r" (_tgt_table[pc - prog]));
-    lbl_trampoline_internal_end:
+      Dispatch;
+    lbl_end_trampoline_internal:
 
+    lbl_POPTRAP_trampoline:
+      if (!caml_something_to_do) {
+        Dispatch;
+      } /* else, fall through */
+    lbl_end_POPTRAP_trampoline:
+
+    lbl_RAISE_trampoline:
+      if (!raise_shall_return) {
+        Dispatch;
+      } /* else, fall through */
+    lbl_end_RAISE_trampoline:
 
 /* Basic stack operations */
 
@@ -1233,24 +1270,26 @@ value caml_interprete(code_t prog, asize_t prog_size)
            handler triggers an exception, the exception is trapped
            by the current try...with, not the enclosing one. */
         pc--; /* restart the POPTRAP after processing the signal */
-        goto process_signal;
+      } else {
+        caml_trapsp = Trap_link(sp);
+        sp += 4;
       }
-      caml_trapsp = Trap_link(sp);
-      sp += 4;
     InstructEnd(POPTRAP):
-      Next;
+      if (caml_something_to_do) {
+        goto process_signal;
+      } else {
+        Next;
+      }
 
     Instruct(RAISE_NOTRACE):
       ++pc;
       if (caml_trapsp >= caml_trap_barrier) _F_caml_debugger(TRAP_BARRIER);
-    InstructEnd(RAISE_NOTRACE):
       goto raise_notrace;
 
     Instruct(RERAISE):
       ++pc;
       if (caml_trapsp >= caml_trap_barrier) _F_caml_debugger(TRAP_BARRIER);
       if (caml_backtrace_active) _F_caml_stash_backtrace(accu, pc, sp, 1);
-    InstructEnd(RERAISE):
       goto raise_notrace;
 
     Instruct(RAISE):
@@ -1259,22 +1298,30 @@ value caml_interprete(code_t prog, asize_t prog_size)
       if (caml_trapsp >= caml_trap_barrier) _F_caml_debugger(TRAP_BARRIER);
       if (caml_backtrace_active) _F_caml_stash_backtrace(accu, pc, sp, 0);
     raise_notrace:
-      if ((char *) caml_trapsp
-          >= (char *) caml_stack_high - initial_sp_offset) {
+      raise_shall_return = ((char *) caml_trapsp
+          >= (char *) caml_stack_high - initial_sp_offset);
+      if (raise_shall_return) {
         caml_external_raise = initial_external_raise;
         caml_extern_sp = (value *) ((char *) caml_stack_high
                                     - initial_sp_offset);
         caml_callback_depth--;
-        return Make_exception_result(accu);
+        accu = Make_exception_result(accu);
+      } else {
+        sp = caml_trapsp;
+        pc = Trap_pc(sp);
+        caml_trapsp = Trap_link(sp);
+        env = sp[2];
+        extra_args = Long_val(sp[3]);
+        sp += 4;
       }
-      sp = caml_trapsp;
-      pc = Trap_pc(sp);
-      caml_trapsp = Trap_link(sp);
-      env = sp[2];
-      extra_args = Long_val(sp[3]);
-      sp += 4;
+    InstructEnd(RAISE_NOTRACE):
+    InstructEnd(RERAISE):
     InstructEnd(RAISE):
-      Next;
+      if (raise_shall_return) {
+        goto perform_return;
+      } else {
+        Next;
+      }
 
 /* Stack checks */
 
@@ -1284,22 +1331,21 @@ value caml_interprete(code_t prog, asize_t prog_size)
         _F_caml_realloc_stack(Stack_threshold / sizeof(value));
         sp = caml_extern_sp;
       }
-      goto check_signal;
+      goto perform_check_signal;
 
 /* Signal handling */
 
     Instruct(CHECK_SIGNALS):    /* accu not preserved */
       ++pc;
-    check_signal:
-      if (caml_something_to_do) goto process_signal;
-    InstructEnd(CHECK_SIGNALS):
-      Next;
-
+    perform_check_signal:
+      if (caml_something_to_do) {
     process_signal:
-      caml_something_to_do = 0;
-      Setup_for_event;
-      _F_caml_process_event();
-      Restore_after_event;
+          caml_something_to_do = 0;
+          Setup_for_event;
+          _F_caml_process_event();
+          Restore_after_event;
+      }
+    InstructEnd(CHECK_SIGNALS):
       Next;
 
 /* Calling C functions */
@@ -1627,12 +1673,12 @@ value caml_interprete(code_t prog, asize_t prog_size)
       *--sp = accu;
       accu = Val_int(*pc);
       pc += 2;
-      goto getdynmet_nopc;
+      goto perform_getdynmet;
 #endif
     Instruct(GETDYNMET):
       ++pc;
 #ifndef CAML_METHOD_CACHE
-    getdynmet_nopc: {
+    perform_getdynmet: {
 #else
     {
 #endif
@@ -1677,6 +1723,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
       caml_external_raise = initial_external_raise;
       caml_extern_sp = sp;
       caml_callback_depth--;
+    perform_return:
       return accu;
 
 #ifndef THREADED_CODE
@@ -1717,11 +1764,15 @@ void caml_release_bytecode(code_t prog, asize_t prog_size) {
 	 ((opcode) == APPLY3)      || ((opcode) == APPTERM)  || ((opcode) == APPTERM1)      || \
 	 ((opcode) == APPTERM2)    || ((opcode) == APPTERM3) || ((opcode) == RETURN)        || \
 	 ((opcode) == GRAB)        || ((opcode) == BRANCH)   || ((opcode) == BRANCHIF)      || \
-	 ((opcode) == BRANCHIFNOT) || ((opcode) == SWITCH)   || ((opcode) == RAISE_NOTRACE) || \
-	 ((opcode) == RERAISE)     || ((opcode) == RAISE)    || ((opcode) == BEQ)           || \
+	 ((opcode) == BRANCHIFNOT) || ((opcode) == SWITCH)   || ((opcode) == BEQ)           || \
 	 ((opcode) == BNEQ)        || ((opcode) == BLTINT)   || ((opcode) == BLEINT)        || \
 	 ((opcode) == BGTINT)      || ((opcode) == BGEINT)   || ((opcode) == BULTINT)       || \
 	 ((opcode) == BUGEINT))
+
+#define MustCheckStack(opcode) \
+  (((opcode) == APPLY)       || ((opcode) == APPLY1)   || ((opcode) == APPLY2)        || \
+   ((opcode) == APPLY3)      || ((opcode) == APPTERM)  || ((opcode) == APPTERM1)      || \
+   ((opcode) == APPTERM2)    || ((opcode) == APPTERM3))
 
 #define CopyCode(entry, exit) \
     { \
@@ -1758,7 +1809,7 @@ void compile() {
          PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
   /* allocates the tgt_table */
-  tgt_table = caml_stat_alloc(jit_saved_code_len * sizeof(void *));
+  tgt_table = caml_stat_alloc(jit_saved_code_len * sizeof(void *)); /* TODO is it ok, or should we use malloc? */
 
   /* dispatches on source code and copies the
    * corresponding blocks in a buffer; at the
@@ -1773,11 +1824,30 @@ void compile() {
 
     /* appends in code_buffer the translation of the bytecode */
     opcode_t cur_bytecode = jit_saved_code[ofst];
-    CopyCode(codetmpl_entry[cur_bytecode], codetmpl_exit[cur_bytecode])
+    CopyCode(codetmpl_entry[cur_bytecode], codetmpl_exit[cur_bytecode]);
+
+    /* possibly appends the check stacks code */
+    if (MustCheckStack(cur_bytecode)) {
+      CopyCode(check_stacks_entry, check_stacks_exit);
+    }
+
+    /* handles POPTRAP */
+    if (cur_bytecode == POPTRAP) {
+      CopyCode(POPTRAP_trampoline_entry, POPTRAP_trampoline_exit);
+      CopyCode(process_signal_entry, process_signal_exit);
+    }
+
+    /* handles RAISE_NOTRACE, RERAISE, RAISE */
+    if (cur_bytecode == RAISE_NOTRACE || cur_bytecode == RERAISE || cur_bytecode == RAISE) {
+      CopyCode(RAISE_trampoline_entry, RAISE_trampoline_exit);
+      CopyCode(perform_return_entry, perform_return_exit);
+    }
 
     /* TODO complete the translation of the bytecode in the cases where this is not enough; patch jumps */
 
-    /* if the bytecode may jump appends the trampoline */
+    /* if the bytecode may jump appends the trampoline (except for raise bytecodes
+     * that have their own)
+     */
     if (MayJump(cur_bytecode)) {
       CopyCode(trampoline_internal_entry, trampoline_internal_exit);
     }
