@@ -15,8 +15,11 @@
 
 #define CAML_INTERNALS
 
+#define _BSD_SOURCE
+
 /* The bytecode interpreter */
 #include <stdio.h>
+#include <sys/mman.h>
 #include "caml/alloc.h"
 #include "caml/backtrace.h"
 #include "caml/callback.h"
@@ -221,10 +224,19 @@ sp is a local copy of the global variable caml_extern_sp. */
 static intnat caml_bcodcount;
 #endif
 
-/* Code templates for the jit compiler */
 #ifdef THREADED_CODE
+/* Variables for the jit compiler */
+/* These are set by fix_code.c/startup.c */
+code_t jit_saved_code;
+asize_t jit_saved_code_len;
+/* These are local */
 static void * *codetmpl_entry;
 static void * *codetmpl_exit;
+static void *trampoline_internal_entry;
+static void *trampoline_internal_exit;
+static void* *tgt_table;
+static long max_template_size;
+static void *binary = 0;
 #endif
 
 /* The interpreter itself */
@@ -269,6 +281,10 @@ value caml_interprete(code_t prog, asize_t prog_size)
 #    include "caml/codetmpl_exit.h"
   };
   codetmpl_exit = _codetmpl_exit;
+  trampoline_internal_entry = &&lbl_trampoline_internal;
+  trampoline_internal_exit = &&lbl_trampoline_internal_end;
+
+  void* *_tgt_table = tgt_table;
 #endif
 
   /* Pointers to functions */
@@ -293,6 +309,20 @@ value caml_interprete(code_t prog, asize_t prog_size)
 #ifdef THREADED_CODE
     caml_instr_table = (char **) jumptable;
     caml_instr_base = Jumptbl_base;
+
+    /* calculates the maximum size of the binary code blocks
+     * that implement the semantics of the bytecodes, and
+     * creates a sufficiently big buffer
+     */
+    max_template_size = 0;
+    for (int i = 0; i < FIRST_UNIMPLEMENTED_OP; ++i) {
+      long binary_block_size = codetmpl_exit[i] - codetmpl_entry[i];
+      /* TODO add the size of the additional blocks for opcodes that require it */
+      if (binary_block_size > max_template_size) {
+        max_template_size = binary_block_size;
+      }
+    }
+
 #endif
     return Val_unit;
   }
@@ -324,6 +354,19 @@ value caml_interprete(code_t prog, asize_t prog_size)
   accu = Val_int(0);
 
 #ifdef THREADED_CODE
+  /* TODO this is just for testing! Compilation should be triggered externally! */
+  int frobaz = 0;
+  void compile(void);
+  if (frobaz) {
+    compile();
+  }
+
+  /* if there is a compiled binary, executes it...
+  if (binary != 0) {
+    asm volatile("jmp *%0" : : "r" (binary));
+  }
+   ...otherwise goes on */
+
 #ifdef DEBUG
  next_instr:
   if (caml_icount-- == 0) caml_stop_here ();
@@ -353,6 +396,12 @@ value caml_interprete(code_t prog, asize_t prog_size)
   dispatch_instr:
     switch(curr_instr) {
 #endif
+
+/* Unreachable operations used as templates for jit compilation */
+    lbl_trampoline_internal:
+      asm volatile("jmp *%0" : : "r" (_tgt_table[pc - prog]));
+    lbl_trampoline_internal_end:
+
 
 /* Basic stack operations */
 
@@ -1565,7 +1614,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
           if (accu < Field(meths,mi)) hi = mi-2;
           else li = mi;
         }
-        *pc = (li-3)*sizeof(value);
+        *pc = (li-3)*sizeof(value); /* TODO trigger jit recompilation */
         accu = Field (meths, li-1);
       }
       pc++;
@@ -1578,10 +1627,15 @@ value caml_interprete(code_t prog, asize_t prog_size)
       *--sp = accu;
       accu = Val_int(*pc);
       pc += 2;
-      /* Fallthrough */
+      goto getdynmet_nopc;
 #endif
-    Instruct(GETDYNMET): {
+    Instruct(GETDYNMET):
       ++pc;
+#ifndef CAML_METHOD_CACHE
+    getdynmet_nopc: {
+#else
+    {
+#endif
       /* accu == tag, sp[0] == object, *pc == cache */
       value meths = Field (sp[0], 0);
       int li = 3, hi = Field(meths,0), mi;
@@ -1655,3 +1709,87 @@ void caml_release_bytecode(code_t prog, asize_t prog_size) {
   Assert(prog);
   Assert(prog_size>0);
 }
+
+#ifdef THREADED_CODE
+
+#define MayJump(opcode) \
+  (((opcode) == APPLY)       || ((opcode) == APPLY1)   || ((opcode) == APPLY2)        || \
+	 ((opcode) == APPLY3)      || ((opcode) == APPTERM)  || ((opcode) == APPTERM1)      || \
+	 ((opcode) == APPTERM2)    || ((opcode) == APPTERM3) || ((opcode) == RETURN)        || \
+	 ((opcode) == GRAB)        || ((opcode) == BRANCH)   || ((opcode) == BRANCHIF)      || \
+	 ((opcode) == BRANCHIFNOT) || ((opcode) == SWITCH)   || ((opcode) == RAISE_NOTRACE) || \
+	 ((opcode) == RERAISE)     || ((opcode) == RAISE)    || ((opcode) == BEQ)           || \
+	 ((opcode) == BNEQ)        || ((opcode) == BLTINT)   || ((opcode) == BLEINT)        || \
+	 ((opcode) == BGTINT)      || ((opcode) == BGEINT)   || ((opcode) == BULTINT)       || \
+	 ((opcode) == BUGEINT))
+
+#define CopyCode(entry, exit) \
+    { \
+      unsigned char *from; \
+      for (from = (unsigned char *) (entry); \
+           from != (unsigned char *) (exit); ++from, ++to) { \
+        *to = *from; \
+        ++compiled_code_size; \
+      } \
+    }
+
+int bytecode_size(int ofst) {
+  /* shamelessly stolen from caml_thread_code */
+  opcode_t instr = jit_saved_code[ofst];
+  if (instr == SWITCH) {
+    uint32_t sizes = jit_saved_code[ofst + 1];
+    uint32_t const_size = sizes & 0xFFFF;
+    uint32_t block_size = sizes >> 16;
+    return const_size + block_size + 2;
+  } else if (instr == CLOSUREREC) {
+    uint32_t nfuncs = jit_saved_code[ofst + 1];
+    return nfuncs + 3;
+  } else {
+    int* l = caml_init_opcode_nargs();
+    return l[instr] + 1;
+  }
+}
+
+void compile() {
+  int compiled_code_size;
+
+  unsigned char *code_buffer =
+    (unsigned char *) mmap(0, jit_saved_code_len * sizeof(unsigned char) * max_template_size,
+         PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+
+  /* allocates the tgt_table */
+  tgt_table = caml_stat_alloc(jit_saved_code_len * sizeof(void *));
+
+  /* dispatches on source code and copies the
+   * corresponding blocks in a buffer; at the
+   * same times builds the target table
+   */
+  compiled_code_size = 0;
+  unsigned char *to = code_buffer;
+  unsigned long long ofst;
+  for (ofst = 0; ofst < jit_saved_code_len; ) {
+    /* updates tgt_table */
+    tgt_table[ofst] = to;
+
+    /* appends in code_buffer the translation of the bytecode */
+    opcode_t cur_bytecode = jit_saved_code[ofst];
+    CopyCode(codetmpl_entry[cur_bytecode], codetmpl_exit[cur_bytecode])
+
+    /* TODO complete the translation of the bytecode in the cases where this is not enough; patch jumps */
+
+    /* if the bytecode may jump appends the trampoline */
+    if (MayJump(cur_bytecode)) {
+      CopyCode(trampoline_internal_entry, trampoline_internal_exit);
+    }
+
+    ofst += bytecode_size(ofst);
+  }
+
+  /* makes the buffer executable */
+  mprotect(code_buffer, compiled_code_size, PROT_READ | PROT_EXEC);
+
+  /* stores the compiled code */
+  binary = code_buffer;
+}
+
+#endif

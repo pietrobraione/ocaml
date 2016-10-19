@@ -32,6 +32,7 @@
 #include "caml/misc.h"
 #include "caml/mlvalues.h"
 #include "caml/reverse.h"
+#include "caml/interp.h"
 
 code_t caml_start_code;
 asize_t caml_code_size;
@@ -63,6 +64,18 @@ void caml_load_code(int fd, asize_t len)
   /* Prepare the code for execution */
 #ifdef ARCH_BIG_ENDIAN
   caml_fixup_endianness(caml_start_code, caml_code_size);
+#endif
+#ifdef THREADED_CODE
+  {
+    jit_saved_code = (code_t) caml_stat_alloc(caml_code_size);
+    jit_saved_code_len = caml_code_size / sizeof(opcode_t);
+    code_t from = caml_start_code;
+    code_t to = jit_saved_code;
+    asize_t count;
+    for (count = 0; count < jit_saved_code_len; ++count) {
+      *to++ = *from++;
+    }
+  }
 #endif
   if (caml_debugger_in_use) {
     len /= sizeof(opcode_t);

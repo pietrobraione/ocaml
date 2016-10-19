@@ -439,6 +439,18 @@ CAMLexport void caml_startup_code(
   caml_code_size = code_size;
   caml_init_code_fragments();
   caml_init_debug_info();
+#ifdef THREADED_CODE
+  {
+    jit_saved_code = (code_t) caml_stat_alloc(caml_code_size);
+    jit_saved_code_len = caml_code_size / sizeof(opcode_t);
+    code_t from = caml_start_code;
+    code_t to = jit_saved_code;
+    asize_t count;
+    for (count = 0; count < jit_saved_code_len; ++count) {
+      *to++ = *from++;
+    }
+  }
+#endif
   if (caml_debugger_in_use) {
     int len, i;
     len = code_size / sizeof(opcode_t);
