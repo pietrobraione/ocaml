@@ -81,6 +81,12 @@ sp is a local copy of the global variable caml_extern_sp. */
 
 #ifdef THREADED_CODE
 #  define Instruct(name) lbl_##name
+#  define InstructEnd(name) lbl_end_##name
+/* Next:         from interpreted to interpreted
+ * JitNext:      from interpreted/compiled to compiled
+ * BreakoutNext: from compiled to interpreted (currently missing)
+ * DebugNext:    from compiled to interpreted, in the case of EVENT and BREAK bytecodes
+ */
 #  if defined(ARCH_SIXTYFOUR) && !defined(ARCH_CODE32)
 #    define Jumptbl_base ((char *) &&lbl_ACC0)
 #  else
@@ -92,7 +98,8 @@ sp is a local copy of the global variable caml_extern_sp. */
 #  else
 #    define Next goto *(void *)(jumptbl_base + *pc)
 #  endif
-#  define InstructEnd(name) lbl_end_##name
+#define JitNext   __asm__ volatile("jmp *%0" : : "r" (_tgt_table[pc - prog]), "r" (_tgt_table), "r" (pc), "r" (prog))
+#define DebugNext __asm__ volatile("jmp *%0" : : "r" (_jumptable[caml_saved_code[pc - caml_start_code]]), "r" (_jumptable), "r" (caml_saved_code), "r" (pc), "r" (caml_start_code))
 #else
 #  define Instruct(name) case name
 #  define Next break
@@ -139,7 +146,8 @@ sp is a local copy of the global variable caml_extern_sp. */
   { --pc; goto *(jumptable[caml_saved_code[pc - caml_start_code]]); }
 #else
 #define Restart_curr_instr \
-  curr_instr = caml_saved_code[pc - 1 - caml_start_code]; \
+  --pc; \
+  curr_instr = caml_saved_code[pc - caml_start_code]; \
   goto dispatch_instr
 #endif
 
@@ -229,7 +237,8 @@ static intnat caml_bcodcount;
 /* These are set by fix_code.c/startup.c */
 code_t jit_saved_code;
 asize_t jit_saved_code_len;
-/* These are local: Code templates stuff */
+/* These are local*/
+/* Various pointers to code templates */
 static void * *codetmpl_entry;
 static void * *codetmpl_exit;
 static void *check_stacks_entry;
@@ -244,10 +253,12 @@ static void *POPTRAP_trampoline_entry;
 static void *POPTRAP_trampoline_exit;
 static void *RAISE_trampoline_entry;
 static void *RAISE_trampoline_exit;
+static void *dbg_trampoline_entry;
+static void *dbg_trampoline_exit;
 static long max_template_size;
-/* (local) target table */
+/* Target table */
 static void* *tgt_table;
-/* (local) the compiled binary code */
+/* The compiled binary code (useless, may be used in future to free memory) */
 static void *binary = 0;
 #endif
 
@@ -293,6 +304,8 @@ value caml_interprete(code_t prog, asize_t prog_size)
   static void * _codetmpl_exit[] = {
 #    include "caml/codetmpl_exit.h"
   };
+
+  /* initializes pointers to code templates */
   codetmpl_exit = _codetmpl_exit;
   check_stacks_entry = &&check_stacks;
   check_stacks_exit = &&InstructEnd(CHECK_SIGNALS);
@@ -306,8 +319,11 @@ value caml_interprete(code_t prog, asize_t prog_size)
   POPTRAP_trampoline_exit = &&lbl_end_POPTRAP_trampoline;
   RAISE_trampoline_entry = &&lbl_RAISE_trampoline;
   RAISE_trampoline_exit = &&lbl_end_RAISE_trampoline;
+  dbg_trampoline_entry = &&lbl_dbg_trampoline;
+  dbg_trampoline_exit = &&lbl_end_dbg_trampoline;
 
-  /* local copy that can be used in inline assembly */
+/* local copy of pointers, necessary to force absolute addressing in trampoline asm */
+  void* *_jumptable = jumptable; 
   void* *_tgt_table = tgt_table;
 #endif
 
@@ -341,11 +357,11 @@ value caml_interprete(code_t prog, asize_t prog_size)
     max_template_size = 0;
     for (int i = 0; i < FIRST_UNIMPLEMENTED_OP; ++i) {
       long binary_block_size = codetmpl_exit[i] - codetmpl_entry[i];
-      /* TODO add the size of the additional blocks for opcodes that require it */
       if (binary_block_size > max_template_size) {
         max_template_size = binary_block_size;
       }
     }
+    /* TODO add the size of the additional blocks for greater safety */
 
 #endif
     return Val_unit;
@@ -385,11 +401,14 @@ value caml_interprete(code_t prog, asize_t prog_size)
     compile();
   }
 
-  /* if there is a compiled binary, executes it...
-  if (binary != 0) {
-    asm volatile("jmp *%0" : : "r" (binary));
+  /* if there is a compiled binary, executes it... */
+  if (frobaz) {
+#if 0
+  if (_tgt_table != 0) {
+#endif
+    JitNext;
   }
-   ...otherwise goes on */
+  /* ...otherwise goes on */
 
 #ifdef DEBUG
  next_instr:
@@ -421,24 +440,27 @@ value caml_interprete(code_t prog, asize_t prog_size)
     switch(curr_instr) {
 #endif
 
-#define DispatchInternal asm volatile("jmp *%0" : : "r" (_tgt_table[pc - prog]));
-
 /* Unreachable operations used as templates for jit compilation */
     lbl_trampoline_internal:
-      DispatchInternal;
+      JitNext;
     lbl_end_trampoline_internal:
 
     lbl_POPTRAP_trampoline:
       if (!caml_something_to_do) {
-        DispatchInternal;
+        JitNext;
       } /* else, fall through */
     lbl_end_POPTRAP_trampoline:
 
     lbl_RAISE_trampoline:
       if (!raise_shall_return) {
-        DispatchInternal;
+        JitNext;
       } /* else, fall through */
     lbl_end_RAISE_trampoline:
+
+    lbl_dbg_trampoline:
+      --pc;
+      DebugNext;
+    lbl_end_dbg_trampoline:
 
 /* Basic stack operations */
 
@@ -1843,7 +1865,10 @@ void compile() {
       CopyCode(perform_return_entry, perform_return_exit);
     }
 
-    /* TODO complete the translation of the bytecode in the cases where this is not enough; patch jumps */
+    /* handles EVENT and BREAK */
+    if (cur_bytecode == EVENT || cur_bytecode == BREAK) {
+      CopyCode(dbg_trampoline_entry, dbg_trampoline_exit);
+    }
 
     /* if the bytecode may jump appends the trampoline (except for raise bytecodes
      * that have their own)
