@@ -136,7 +136,7 @@ sp is a local copy of the global variable caml_extern_sp. */
 
 #ifdef THREADED_CODE
 #define Restart_curr_instr \
-  goto *(jumptable[caml_saved_code[pc - 1 - caml_start_code]])
+  { --pc; goto *(jumptable[caml_saved_code[pc - caml_start_code]]); }
 #else
 #define Restart_curr_instr \
   curr_instr = caml_saved_code[pc - 1 - caml_start_code]; \
@@ -421,22 +421,22 @@ value caml_interprete(code_t prog, asize_t prog_size)
     switch(curr_instr) {
 #endif
 
-#define Dispatch asm volatile("jmp *%0" : : "r" (_tgt_table[pc - prog]));
+#define DispatchInternal asm volatile("jmp *%0" : : "r" (_tgt_table[pc - prog]));
 
 /* Unreachable operations used as templates for jit compilation */
     lbl_trampoline_internal:
-      Dispatch;
+      DispatchInternal;
     lbl_end_trampoline_internal:
 
     lbl_POPTRAP_trampoline:
       if (!caml_something_to_do) {
-        Dispatch;
+        DispatchInternal;
       } /* else, fall through */
     lbl_end_POPTRAP_trampoline:
 
     lbl_RAISE_trampoline:
       if (!raise_shall_return) {
-        Dispatch;
+        DispatchInternal;
       } /* else, fall through */
     lbl_end_RAISE_trampoline:
 
