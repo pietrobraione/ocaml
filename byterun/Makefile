@@ -85,7 +85,7 @@ clean::
 %.pic.o: %.c
 	$(CC) -c $(CFLAGS) $(SHAREDCCCOMPOPTS) $< -o $@
 
-depend : prims.c caml/opnames.h caml/jumptbl.h caml/codetmpl_exit.h caml/version.h
+depend : prims.c caml/opnames.h caml/jumptbl.h caml/codetmpl_exit.h caml/mnem.h caml/version.h
 	-$(CC) -MM $(BYTECCCOMPOPTS) *.c > .depend
 	-$(CC) -MM $(BYTECCCOMPOPTS) -DDEBUG *.c | sed -e 's/\.o/.d.o/' \
 	       >> .depend

@@ -15,9 +15,10 @@
 
 #define CAML_INTERNALS
 
-#define _BSD_SOURCE
+#define _DEFAULT_SOURCE
 
 /* The bytecode interpreter */
+#include <stdarg.h>
 #include <stdio.h>
 #include <sys/mman.h>
 #include "caml/alloc.h"
@@ -38,6 +39,20 @@
 #include "caml/stacks.h"
 #include "caml/startup_aux.h"
 
+#if (defined(THREADED_CODE) && defined(DUMP_JIT_OPCODES)) || (defined(CAML_METHOD_CACHE) && defined(CAML_TEST_CACHE))
+/* printf on stderr */
+int stderrprintf(const char *fmt, ...) {
+  va_list arg;
+  int done;
+
+  va_start(arg, fmt);
+  done = vfprintf(stderr, fmt, arg);
+  va_end(arg);
+
+  return done;
+}
+#endif
+
 /* Redefinition of macros */
 #if defined(NATIVE_CODE) && defined(WITH_SPACETIME)
 extern uintnat caml_spacetime_my_profinfo(struct ext_table**, uintnat);
@@ -52,20 +67,22 @@ extern uintnat caml_spacetime_my_profinfo(struct ext_table**, uintnat);
                                                 CAMLassert ((wosize) >= 1); \
                                           CAMLassert ((tag_t) (tag) < 256); \
                                  CAMLassert ((wosize) <= Max_young_wosize); \
-  caml_young_ptr -= Whsize_wosize (wosize);                                 \
-  if (caml_young_ptr < caml_young_trigger){                                 \
-    caml_young_ptr += Whsize_wosize (wosize);                               \
+  *_P_caml_young_ptr -= Whsize_wosize (wosize);                                 \
+  if (*_P_caml_young_ptr < *_P_caml_young_trigger){                                 \
+	  *_P_caml_young_ptr += Whsize_wosize (wosize);                               \
     CAML_INSTR_INT ("force_minor/alloc_small@", 1);                         \
     Setup_for_gc;                                                           \
     _F_caml_gc_dispatch ();                                                    \
     Restore_after_gc;                                                       \
-    caml_young_ptr -= Whsize_wosize (wosize);                               \
+    *_P_caml_young_ptr -= Whsize_wosize (wosize);                               \
   }                                                                         \
-  Hd_hp (caml_young_ptr) =                                                  \
+  Hd_hp (*_P_caml_young_ptr) =                                                  \
     Make_header_with_profinfo ((wosize), (tag), Caml_black, profinfo);      \
-  (result) = Val_hp (caml_young_ptr);                                       \
+  (result) = Val_hp (*_P_caml_young_ptr);                                       \
   DEBUG_clear ((result), (wosize));                                         \
 }while(0)
+
+#define _F_Primitive(n) ((c_primitive)(_P_caml_prim_table->contents[n]))
 
 /* Registers for the abstract machine:
         pc         the code pointer
@@ -109,13 +126,13 @@ sp is a local copy of the global variable caml_extern_sp. */
 /* GC interface */
 
 #define Setup_for_gc \
-  { sp -= 2; sp[0] = accu; sp[1] = env; caml_extern_sp = sp; }
+  { sp -= 2; sp[0] = accu; sp[1] = env; *_P_caml_extern_sp = sp; }
 #define Restore_after_gc \
   { accu = sp[0]; env = sp[1]; sp += 2; }
 #define Setup_for_c_call \
-  { saved_pc = pc; *--sp = env; caml_extern_sp = sp; }
+  { saved_pc = pc; *--sp = env; *_P_caml_extern_sp = sp; }
 #define Restore_after_c_call \
-  { sp = caml_extern_sp; env = *sp++; saved_pc = NULL; }
+  { sp = *_P_caml_extern_sp; env = *sp++; saved_pc = NULL; }
 
 /* An event frame must look like accu + a C_CALL frame + a RETURN 1 frame */
 #define Setup_for_event \
@@ -126,9 +143,9 @@ sp is a local copy of the global variable caml_extern_sp. */
     sp[3] = (value) pc; /* RETURN frame: saved return address */ \
     sp[4] = env; /* RETURN frame: saved environment */ \
     sp[5] = Val_long(extra_args); /* RETURN frame: saved extra args */ \
-    caml_extern_sp = sp; }
+    *_P_caml_extern_sp = sp; }
 #define Restore_after_event \
-  { sp = caml_extern_sp; accu = sp[0]; \
+  { sp = *_P_caml_extern_sp; accu = sp[0]; \
     pc = (code_t) sp[3]; env = sp[4]; extra_args = Long_val(sp[5]); \
     sp += 6; }
 
@@ -138,7 +155,7 @@ sp is a local copy of the global variable caml_extern_sp. */
    { sp -= 4; \
      sp[0] = accu; sp[1] = (value)(pc - 1); \
      sp[2] = env; sp[3] = Val_long(extra_args); \
-     caml_extern_sp = sp; }
+     *_P_caml_extern_sp = sp; }
 #define Restore_after_debugger { sp += 4; }
 
 #ifdef THREADED_CODE
@@ -255,12 +272,27 @@ static void *RAISE_trampoline_entry;
 static void *RAISE_trampoline_exit;
 static void *dbg_trampoline_entry;
 static void *dbg_trampoline_exit;
+#ifdef DUMP_JIT_OPCODES
+static void *echo_entry;
+static void *echo_exit;
+#endif
 static long max_template_size;
+
 /* Target table */
 static void* *tgt_table;
+
 /* The compiled binary code (useless, may be used in future to free memory) */
 static void *binary = 0;
+
+#ifdef DUMP_JIT_OPCODES
+char *mnemonic(opcode_t x) {
+return (
+#   include "caml/mnem.h"
+    "INVALID_BYTECODE" );
+}
 #endif
+#endif
+
 
 /* The interpreter itself */
 
@@ -300,12 +332,13 @@ value caml_interprete(code_t prog, asize_t prog_size)
   static void * jumptable[] = {
 #    include "caml/jumptbl.h"
   };
-  codetmpl_entry = jumptable;
+#define STOP_TEMPLATE_SIZE 100
   static void * _codetmpl_exit[] = {
 #    include "caml/codetmpl_exit.h"
   };
 
   /* initializes pointers to code templates */
+  codetmpl_entry = jumptable;
   codetmpl_exit = _codetmpl_exit;
   check_stacks_entry = &&check_stacks;
   check_stacks_exit = &&InstructEnd(CHECK_SIGNALS);
@@ -321,13 +354,39 @@ value caml_interprete(code_t prog, asize_t prog_size)
   RAISE_trampoline_exit = &&lbl_end_RAISE_trampoline;
   dbg_trampoline_entry = &&lbl_dbg_trampoline;
   dbg_trampoline_exit = &&lbl_end_dbg_trampoline;
-
-/* local copy of pointers, necessary to force absolute addressing in trampoline asm */
-  void* *_jumptable = jumptable; 
-  void* *_tgt_table = tgt_table;
+#ifdef DUMP_JIT_OPCODES
+  echo_entry = &&lbl_echo;
+  echo_exit = &&lbl_end_echo;
+#endif
 #endif
 
-  /* Pointers to functions */
+  /* Local pointers to global data, used to force correct addressing in asm */
+  void* *_jumptable = jumptable; 
+  void* *_tgt_table = tgt_table;
+#if defined(THREADED_CODE) && defined(DUMP_JIT_OPCODES)
+  code_t _jit_saved_code = jit_saved_code;
+  const char *_echo_fmt = "%d %s\n";
+#endif
+#if defined(CAML_METHOD_CACHE) && defined(CAML_TEST_CACHE)
+  const char *_cache_hit_fmt = "cache hit = %d%%\n";
+#endif
+
+  /* Pointers to extern data, used to force correct addressing in asm */
+  value*                 *_P_caml_young_ptr        = &caml_young_ptr;
+  value*                 *_P_caml_young_trigger    = &caml_young_trigger;
+  value                  *_P_caml_global_data      = &caml_global_data;
+  struct ext_table       *_P_caml_prim_table       = &caml_prim_table;
+  value*                 *_P_caml_stack_high       = &caml_stack_high;
+  value*                 *_P_caml_stack_threshold  = &caml_stack_threshold;
+  value*                 *_P_caml_extern_sp        = &caml_extern_sp;
+  value*                 *_P_caml_trapsp           = &caml_trapsp;
+  value*                 *_P_caml_trap_barrier     = &caml_trap_barrier;
+  volatile int           *_P_caml_something_to_do  = &caml_something_to_do;
+  int32_t                *_P_caml_backtrace_active = &caml_backtrace_active;
+  struct longjmp_buffer* *_P_caml_external_raise   = &caml_external_raise;
+  int                    *_P_caml_callback_depth   = &caml_callback_depth;
+
+  /* Pointers to functions, used to force correct addressing in asm */
 #if defined(NATIVE_CODE) && defined(WITH_SPACETIME)
   uintnat (*_F_caml_spacetime_my_profinfo)(void) = caml_spacetime_my_profinfo;
 #endif
@@ -341,8 +400,11 @@ value caml_interprete(code_t prog, asize_t prog_size)
   void    (*_F_caml_realloc_stack)(asize_t)      = caml_realloc_stack;
   void    (*_F_caml_process_event)(void)         = caml_process_event;
   void    (*_F_caml_raise_zero_divide)(void)     = caml_raise_zero_divide;
-#ifdef CAML_TEST_CACHE
-  int     (*_F_fprintf)(FILE*, const char*, ...) = fprintf;
+#if (defined(THREADED_CODE) && defined(DUMP_JIT_OPCODES)) || (defined(CAML_METHOD_CACHE) && defined(CAML_TEST_CACHE))
+  int     (*_F_stderrprintf)(const char*, ...)   = stderrprintf;
+#endif
+#if defined(THREADED_CODE) && defined(DUMP_JIT_OPCODES)
+  char*   (*_F_mnemonic)(opcode_t)               = mnemonic;
 #endif
 
   if (prog == NULL) {           /* Interpreter is initializing */
@@ -399,6 +461,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
   void compile(void);
   if (frobaz) {
     compile();
+    _tgt_table = tgt_table;
   }
 
   /* if there is a compiled binary, executes it... */
@@ -441,12 +504,13 @@ value caml_interprete(code_t prog, asize_t prog_size)
 #endif
 
 /* Unreachable operations used as templates for jit compilation */
+
     lbl_trampoline_internal:
       JitNext;
     lbl_end_trampoline_internal:
 
     lbl_POPTRAP_trampoline:
-      if (!caml_something_to_do) {
+      if (!*_P_caml_something_to_do) {
         JitNext;
       } /* else, fall through */
     lbl_end_POPTRAP_trampoline:
@@ -461,6 +525,12 @@ value caml_interprete(code_t prog, asize_t prog_size)
       --pc;
       DebugNext;
     lbl_end_dbg_trampoline:
+
+#if defined(THREADED_CODE) && defined(DUMP_JIT_OPCODES)
+    lbl_echo:
+      _F_stderrprintf(_echo_fmt, pc - prog, _F_mnemonic(_jit_saved_code[pc - prog]));
+    lbl_end_echo:
+#endif
 
 /* Basic stack operations */
 
@@ -953,14 +1023,14 @@ value caml_interprete(code_t prog, asize_t prog_size)
     Instruct(PUSHGETGLOBAL):
       ++pc;
       *--sp = accu;
-      accu = Field(caml_global_data, *pc);
+      accu = Field(*_P_caml_global_data, *pc);
       pc++;
     InstructEnd(PUSHGETGLOBAL):
       Next;
 
     Instruct(GETGLOBAL):
       ++pc;
-      accu = Field(caml_global_data, *pc);
+      accu = Field(*_P_caml_global_data, *pc);
       pc++;
     InstructEnd(GETGLOBAL):
       Next;
@@ -968,7 +1038,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
     Instruct(PUSHGETGLOBALFIELD):
       ++pc;
       *--sp = accu;
-      accu = Field(caml_global_data, *pc);
+      accu = Field(*_P_caml_global_data, *pc);
       pc++;
       accu = Field(accu, *pc);
       pc++;
@@ -977,7 +1047,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
 
     Instruct(GETGLOBALFIELD): {
       ++pc;
-      accu = Field(caml_global_data, *pc);
+      accu = Field(*_P_caml_global_data, *pc);
       pc++;
       accu = Field(accu, *pc);
       pc++;
@@ -987,7 +1057,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
 
     Instruct(SETGLOBAL):
       ++pc;
-      _F_caml_modify(&Field(caml_global_data, *pc), accu);
+      _F_caml_modify(&Field(*_P_caml_global_data, *pc), accu);
       accu = Val_unit;
       pc++;
     InstructEnd(SETGLOBAL):
@@ -1277,23 +1347,23 @@ value caml_interprete(code_t prog, asize_t prog_size)
       ++pc;
       sp -= 4;
       Trap_pc(sp) = pc + *pc;
-      Trap_link(sp) = caml_trapsp;
+      Trap_link(sp) = *_P_caml_trapsp;
       sp[2] = env;
       sp[3] = Val_long(extra_args);
-      caml_trapsp = sp;
+      *_P_caml_trapsp = sp;
       pc++;
     InstructEnd(PUSHTRAP):
       Next;
 
     Instruct(POPTRAP):
       ++pc;
-      if (caml_something_to_do) {
+      if (*_P_caml_something_to_do) {
         /* We must check here so that if a signal is pending and its
            handler triggers an exception, the exception is trapped
            by the current try...with, not the enclosing one. */
         pc--; /* restart the POPTRAP after processing the signal */
       } else {
-        caml_trapsp = Trap_link(sp);
+        *_P_caml_trapsp = Trap_link(sp);
         sp += 4;
       }
     InstructEnd(POPTRAP):
@@ -1305,33 +1375,33 @@ value caml_interprete(code_t prog, asize_t prog_size)
 
     Instruct(RAISE_NOTRACE):
       ++pc;
-      if (caml_trapsp >= caml_trap_barrier) _F_caml_debugger(TRAP_BARRIER);
+      if (*_P_caml_trapsp >= *_P_caml_trap_barrier) _F_caml_debugger(TRAP_BARRIER);
       goto raise_notrace;
 
     Instruct(RERAISE):
       ++pc;
-      if (caml_trapsp >= caml_trap_barrier) _F_caml_debugger(TRAP_BARRIER);
-      if (caml_backtrace_active) _F_caml_stash_backtrace(accu, pc, sp, 1);
+      if (*_P_caml_trapsp >= *_P_caml_trap_barrier) _F_caml_debugger(TRAP_BARRIER);
+      if (*_P_caml_backtrace_active) _F_caml_stash_backtrace(accu, pc, sp, 1);
       goto raise_notrace;
 
     Instruct(RAISE):
       ++pc;
     raise_exception:
-      if (caml_trapsp >= caml_trap_barrier) _F_caml_debugger(TRAP_BARRIER);
-      if (caml_backtrace_active) _F_caml_stash_backtrace(accu, pc, sp, 0);
+      if (*_P_caml_trapsp >= *_P_caml_trap_barrier) _F_caml_debugger(TRAP_BARRIER);
+      if (*_P_caml_backtrace_active) _F_caml_stash_backtrace(accu, pc, sp, 0);
     raise_notrace:
-      raise_shall_return = ((char *) caml_trapsp
-          >= (char *) caml_stack_high - initial_sp_offset);
+      raise_shall_return = ((char *) *_P_caml_trapsp
+          >= (char *) *_P_caml_stack_high - initial_sp_offset);
       if (raise_shall_return) {
-        caml_external_raise = initial_external_raise;
-        caml_extern_sp = (value *) ((char *) caml_stack_high
+        *_P_caml_external_raise = initial_external_raise;
+        *_P_caml_extern_sp = (value *) ((char *) *_P_caml_stack_high
                                     - initial_sp_offset);
-        caml_callback_depth--;
+        (*_P_caml_callback_depth)--;
         accu = Make_exception_result(accu);
       } else {
-        sp = caml_trapsp;
+        sp = *_P_caml_trapsp;
         pc = Trap_pc(sp);
-        caml_trapsp = Trap_link(sp);
+        *_P_caml_trapsp = Trap_link(sp);
         env = sp[2];
         extra_args = Long_val(sp[3]);
         sp += 4;
@@ -1348,10 +1418,10 @@ value caml_interprete(code_t prog, asize_t prog_size)
 /* Stack checks */
 
     check_stacks:
-      if (sp < caml_stack_threshold) {
-        caml_extern_sp = sp;
+      if (sp < *_P_caml_stack_threshold) {
+        *_P_caml_extern_sp = sp;
         _F_caml_realloc_stack(Stack_threshold / sizeof(value));
-        sp = caml_extern_sp;
+        sp = *_P_caml_extern_sp;
       }
       goto perform_check_signal;
 
@@ -1360,9 +1430,9 @@ value caml_interprete(code_t prog, asize_t prog_size)
     Instruct(CHECK_SIGNALS):    /* accu not preserved */
       ++pc;
     perform_check_signal:
-      if (caml_something_to_do) {
+      if (*_P_caml_something_to_do) {
     process_signal:
-          caml_something_to_do = 0;
+          *_P_caml_something_to_do = 0;
           Setup_for_event;
           _F_caml_process_event();
           Restore_after_event;
@@ -1375,7 +1445,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
     Instruct(C_CALL1):
       ++pc;
       Setup_for_c_call;
-      accu = Primitive(*pc)(accu);
+      accu = _F_Primitive(*pc)(accu);
       Restore_after_c_call;
       pc++;
     InstructEnd(C_CALL1):
@@ -1384,7 +1454,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
     Instruct(C_CALL2):
       ++pc;
       Setup_for_c_call;
-      accu = Primitive(*pc)(accu, sp[1]);
+      accu = _F_Primitive(*pc)(accu, sp[1]);
       Restore_after_c_call;
       sp += 1;
       pc++;
@@ -1394,7 +1464,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
     Instruct(C_CALL3):
       ++pc;
       Setup_for_c_call;
-      accu = Primitive(*pc)(accu, sp[1], sp[2]);
+      accu = _F_Primitive(*pc)(accu, sp[1], sp[2]);
       Restore_after_c_call;
       sp += 2;
       pc++;
@@ -1404,7 +1474,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
     Instruct(C_CALL4):
       ++pc;
       Setup_for_c_call;
-      accu = Primitive(*pc)(accu, sp[1], sp[2], sp[3]);
+      accu = _F_Primitive(*pc)(accu, sp[1], sp[2], sp[3]);
       Restore_after_c_call;
       sp += 3;
       pc++;
@@ -1414,7 +1484,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
     Instruct(C_CALL5):
       ++pc;
       Setup_for_c_call;
-      accu = Primitive(*pc)(accu, sp[1], sp[2], sp[3], sp[4]);
+      accu = _F_Primitive(*pc)(accu, sp[1], sp[2], sp[3], sp[4]);
       Restore_after_c_call;
       sp += 4;
       pc++;
@@ -1426,7 +1496,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
       int nargs = *pc++;
       *--sp = accu;
       Setup_for_c_call;
-      accu = Primitive(*pc)(sp + 1, nargs);
+      accu = _F_Primitive(*pc)(sp + 1, nargs);
       Restore_after_c_call;
       sp += nargs;
       pc++;
@@ -1660,7 +1730,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
 #ifdef CAML_TEST_CACHE
       static int calls = 0, hits = 0;
       if (calls >= 10000000) {
-        _F_fprintf(stderr, "cache hit = %d%%\n", hits / 100000);
+        _F_stderrprintf(_cache_hit_fmt, hits / 100000);
         calls = 0; hits = 0;
       }
       calls++;
@@ -1742,9 +1812,9 @@ value caml_interprete(code_t prog, asize_t prog_size)
 
     Instruct(STOP):
       ++pc;
-      caml_external_raise = initial_external_raise;
-      caml_extern_sp = sp;
-      caml_callback_depth--;
+      *_P_caml_external_raise = initial_external_raise;
+      *_P_caml_extern_sp = sp;
+      (*_P_caml_callback_depth)--;
     perform_return:
       return accu;
 
@@ -1846,6 +1916,9 @@ void compile() {
 
     /* appends in code_buffer the translation of the bytecode */
     opcode_t cur_bytecode = jit_saved_code[ofst];
+#ifdef DUMP_JIT_OPCODES
+    CopyCode(echo_entry, echo_exit);
+#endif
     CopyCode(codetmpl_entry[cur_bytecode], codetmpl_exit[cur_bytecode]);
 
     /* possibly appends the check stacks code */
