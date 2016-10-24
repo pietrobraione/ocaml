@@ -54,6 +54,7 @@ int stderrprintf(const char *fmt, ...) {
 #endif
 
 /* Redefinition of macros */
+/* Declared in memory.h */
 #if defined(NATIVE_CODE) && defined(WITH_SPACETIME)
 extern uintnat caml_spacetime_my_profinfo(struct ext_table**, uintnat);
 #define _F_Alloc_small(result, wosize, tag) \
@@ -81,8 +82,11 @@ extern uintnat caml_spacetime_my_profinfo(struct ext_table**, uintnat);
   (result) = Val_hp (*_P_caml_young_ptr);                                       \
   DEBUG_clear ((result), (wosize));                                         \
 }while(0)
-
+/* declared in prims.h */
 #define _F_Primitive(n) ((c_primitive)(_P_caml_prim_table->contents[n]))
+/* declared in mlvalues.h */
+#define _F_Atom(tag) (Val_hp (&((*_P_caml_atom_table) [(tag)])))
+
 
 /* Registers for the abstract machine:
         pc         the code pointer
@@ -116,7 +120,7 @@ sp is a local copy of the global variable caml_extern_sp. */
 #    define Next goto *(void *)(jumptbl_base + *pc)
 #  endif
 #define JitNext   __asm__ volatile("jmp *%0" : : "r" (_tgt_table[pc - prog]), "r" (_tgt_table), "r" (pc), "r" (prog))
-#define DebugNext __asm__ volatile("jmp *%0" : : "r" (_jumptable[caml_saved_code[pc - caml_start_code]]), "r" (_jumptable), "r" (caml_saved_code), "r" (pc), "r" (caml_start_code))
+#define DebugNext __asm__ volatile("jmp *%0" : : "r" (_jumptable[(*_P_caml_saved_code)[pc - *_P_caml_start_code]]), "r" (_jumptable), "r" (_P_caml_saved_code), "r" (pc), "r" (_P_caml_start_code))
 #else
 #  define Instruct(name) case name
 #  define Next break
@@ -160,7 +164,7 @@ sp is a local copy of the global variable caml_extern_sp. */
 
 #ifdef THREADED_CODE
 #define Restart_curr_instr \
-  { --pc; goto *(jumptable[caml_saved_code[pc - caml_start_code]]); }
+  { --pc; goto *(_jumptable[(*_P_caml_saved_code)[pc - *_P_caml_start_code]]); }
 #else
 #define Restart_curr_instr \
   --pc; \
@@ -385,6 +389,10 @@ value caml_interprete(code_t prog, asize_t prog_size)
   int32_t                *_P_caml_backtrace_active = &caml_backtrace_active;
   struct longjmp_buffer* *_P_caml_external_raise   = &caml_external_raise;
   int                    *_P_caml_callback_depth   = &caml_callback_depth;
+  unsigned char*         *_P_caml_saved_code       = &caml_saved_code;
+  code_t                 *_P_caml_start_code       = &caml_start_code;
+  uintnat                *_P_caml_event_count      = &caml_event_count;
+  header_t               (*_P_caml_atom_table)[]   = &caml_atom_table;
 
   /* Pointers to functions, used to force correct addressing in asm */
 #if defined(NATIVE_CODE) && defined(WITH_SPACETIME)
@@ -504,7 +512,6 @@ value caml_interprete(code_t prog, asize_t prog_size)
 #endif
 
 /* Unreachable operations used as templates for jit compilation */
-
     lbl_trampoline_internal:
       JitNext;
     lbl_end_trampoline_internal:
@@ -1068,26 +1075,26 @@ value caml_interprete(code_t prog, asize_t prog_size)
     Instruct(PUSHATOM0):
       ++pc;
       *--sp = accu;
-      accu = Atom(0);
+      accu = _F_Atom(0);
     InstructEnd(PUSHATOM0):
       Next;
 
     Instruct(ATOM0):
       ++pc;
-      accu = Atom(0);
+      accu = _F_Atom(0);
     InstructEnd(ATOM0):
       Next;
 
     Instruct(PUSHATOM):
       ++pc;
       *--sp = accu;
-      accu = Atom(*pc++);
+      accu = _F_Atom(*pc++);
     InstructEnd(PUSHATOM):
       Next;
 
     Instruct(ATOM):
       ++pc;
-      accu = Atom(*pc++);
+      accu = _F_Atom(*pc++);
     InstructEnd(ATOM):
       Next;
 
@@ -1794,7 +1801,7 @@ value caml_interprete(code_t prog, asize_t prog_size)
 
     Instruct(EVENT):
       ++pc;
-      if (--caml_event_count == 0) {
+      if (--(*_P_caml_event_count) == 0) {
         Setup_for_debugger;
         _F_caml_debugger(EVENT_COUNT);
         Restore_after_debugger;
