@@ -103,7 +103,9 @@
 /bytecomp/runtimedef.ml
 /bytecomp/opcodes.ml
 
+/byterun/caml/codetmpl_exit.h
 /byterun/caml/jumptbl.h
+/byterun/caml/mnem.h
 /byterun/primitives
 /byterun/prims.c
 /byterun/caml/opnames.h

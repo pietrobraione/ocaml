@@ -354,14 +354,18 @@ CAMLexport void caml_main(char **argv)
   caml_debugger_init();
   /* Load the code */
   caml_code_size = caml_seek_section(fd, &trail, "CODE");
-#ifdef THREADED_CODE
-#if 0
-  /* compile before loading code because it does threading */
-  struct jit_context compiled_code;
-  jit_compile(caml_start_code, caml_code_size / sizeof(opcode_t));
-#endif
-#endif
   caml_load_code(fd, caml_code_size);
+#ifdef THREADED_CODE
+#if 1
+  /* compile before threading */
+  struct jit_context compiled_code;
+  jit_compile(caml_start_code, caml_code_size / sizeof(opcode_t), &compiled_code);
+#endif
+  /* Better to thread now than at the beginning of [caml_interprete],
+     since the debugger interface needs to perform SET_EVENT requests
+     on the code. */
+  caml_thread_code(caml_start_code, caml_code_size);
+#endif
   caml_init_debug_info();
   /* Build the table of primitives */
   shared_lib_path = read_section(fd, &trail, "DLPT");
@@ -390,7 +394,7 @@ CAMLexport void caml_main(char **argv)
 #endif
   /* Execute the program */
   caml_debugger(PROGRAM_START);
-#if 0
+#if 1
   res = caml_interprete(caml_start_code, caml_code_size, &compiled_code);
 #else
   res = caml_interprete(caml_start_code, caml_code_size, 0);
@@ -459,7 +463,7 @@ CAMLexport void caml_startup_code(
 #ifdef THREADED_CODE
 #if 0
   struct jit_context compiled_code;
-  jit_compile(caml_start_code, caml_code_size / sizeof(opcode_t));
+  jit_compile(caml_start_code, caml_code_size / sizeof(opcode_t), &compiled_code);
 #endif
   caml_thread_code(caml_start_code, code_size);
 #endif
