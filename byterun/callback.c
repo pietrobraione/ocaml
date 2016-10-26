@@ -81,7 +81,7 @@ CAMLexport value caml_callbackN_exn(value closure, int narg, value args[])
   Init_callback();
   callback_code[1] = narg + 3;
   callback_code[3] = narg;
-  res = caml_interprete(callback_code, sizeof(callback_code));
+  res = caml_interprete(callback_code, sizeof(callback_code), 0);
 #else /*have LOCAL_CALLBACK_BYTECODE*/
   caml_extern_sp[narg] = (value) (local_callback_code + 4); /* return address */
   caml_extern_sp[narg + 1] = Val_unit;    /* environment */
@@ -97,7 +97,7 @@ CAMLexport value caml_callbackN_exn(value closure, int narg, value args[])
 #ifdef THREADED_CODE
   caml_thread_code(local_callback_code, sizeof(local_callback_code));
 #endif /*THREADED_CODE*/
-  res = caml_interprete(local_callback_code, sizeof(local_callback_code));
+  res = caml_interprete(local_callback_code, sizeof(local_callback_code), 0);
   caml_release_bytecode(local_callback_code, sizeof(local_callback_code));
 #endif /*LOCAL_CALLBACK_BYTECODE*/
   if (Is_exception_result(res)) caml_extern_sp += narg + 4; /* PR#1228 */

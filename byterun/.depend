@@ -119,7 +119,7 @@ interp.o: interp.c caml/alloc.h caml/compatibility.h caml/misc.h \
  caml/memory.h caml/gc.h caml/major_gc.h caml/minor_gc.h \
  caml/address_class.h caml/misc.h caml/mlvalues.h caml/prims.h \
  caml/signals.h caml/stacks.h caml/memory.h caml/startup_aux.h \
- caml/jumptbl.h caml/codetmpl_exit.h caml/mnem.h
+ caml/jumptbl.h caml/codetmpl_exit.h caml/mnem.h caml/jit.h
 ints.o: ints.c caml/alloc.h caml/compatibility.h caml/misc.h \
  caml/config.h caml/../../config/m.h caml/../../config/s.h \
  caml/mlvalues.h caml/custom.h caml/fail.h caml/intext.h caml/io.h \
@@ -131,6 +131,8 @@ io.o: io.c caml/config.h caml/../../config/m.h caml/../../config/s.h \
  caml/gc.h caml/major_gc.h caml/freelist.h caml/minor_gc.h \
  caml/address_class.h caml/misc.h caml/mlvalues.h caml/osdeps.h \
  caml/signals.h caml/sys.h
+jit.o: jit.c caml/fix_code.h caml/instruct.h caml/jit.h caml/memory.h \
+ caml/misc.h caml/mlvalues.h
 lexing.o: lexing.c caml/fail.h caml/compatibility.h caml/misc.h \
  caml/config.h caml/../../config/m.h caml/../../config/s.h \
  caml/mlvalues.h caml/mlvalues.h caml/stacks.h caml/memory.h caml/gc.h \
@@ -379,7 +381,8 @@ interp.d.o: interp.c caml/alloc.h caml/compatibility.h caml/misc.h \
  caml/instruct.h caml/interp.h caml/major_gc.h caml/freelist.h \
  caml/memory.h caml/gc.h caml/major_gc.h caml/minor_gc.h \
  caml/address_class.h caml/misc.h caml/mlvalues.h caml/prims.h \
- caml/signals.h caml/stacks.h caml/memory.h caml/startup_aux.h
+ caml/signals.h caml/stacks.h caml/memory.h caml/startup_aux.h \
+ caml/jumptbl.h caml/codetmpl_exit.h caml/mnem.h caml/jit.h
 ints.d.o: ints.c caml/alloc.h caml/compatibility.h caml/misc.h \
  caml/config.h caml/../../config/m.h caml/../../config/s.h \
  caml/mlvalues.h caml/custom.h caml/fail.h caml/intext.h caml/io.h \
@@ -635,7 +638,7 @@ interp.i.o: interp.c caml/alloc.h caml/compatibility.h caml/misc.h \
  caml/memory.h caml/gc.h caml/major_gc.h caml/minor_gc.h \
  caml/address_class.h caml/misc.h caml/mlvalues.h caml/prims.h \
  caml/signals.h caml/stacks.h caml/memory.h caml/startup_aux.h \
- caml/jumptbl.h
+ caml/jumptbl.h caml/codetmpl_exit.h caml/mnem.h caml/jit.h
 ints.i.o: ints.c caml/alloc.h caml/compatibility.h caml/misc.h \
  caml/config.h caml/../../config/m.h caml/../../config/s.h \
  caml/mlvalues.h caml/custom.h caml/fail.h caml/intext.h caml/io.h \
@@ -891,7 +894,7 @@ interp.pic.o: interp.c caml/alloc.h caml/compatibility.h caml/misc.h \
  caml/memory.h caml/gc.h caml/major_gc.h caml/minor_gc.h \
  caml/address_class.h caml/misc.h caml/mlvalues.h caml/prims.h \
  caml/signals.h caml/stacks.h caml/memory.h caml/startup_aux.h \
- caml/jumptbl.h
+ caml/jumptbl.h caml/codetmpl_exit.h caml/mnem.h caml/jit.h
 ints.pic.o: ints.c caml/alloc.h caml/compatibility.h caml/misc.h \
  caml/config.h caml/../../config/m.h caml/../../config/s.h \
  caml/mlvalues.h caml/custom.h caml/fail.h caml/intext.h caml/io.h \
@@ -903,6 +906,8 @@ io.pic.o: io.c caml/config.h caml/../../config/m.h caml/../../config/s.h \
  caml/gc.h caml/major_gc.h caml/freelist.h caml/minor_gc.h \
  caml/address_class.h caml/misc.h caml/mlvalues.h caml/osdeps.h \
  caml/signals.h caml/sys.h
+jit.pic.o: jit.c caml/fix_code.h caml/instruct.h caml/jit.h caml/memory.h \
+ caml/misc.h caml/mlvalues.h
 lexing.pic.o: lexing.c caml/fail.h caml/compatibility.h caml/misc.h \
  caml/config.h caml/../../config/m.h caml/../../config/s.h \
  caml/mlvalues.h caml/mlvalues.h caml/stacks.h caml/memory.h caml/gc.h \

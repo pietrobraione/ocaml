@@ -15,12 +15,9 @@
 
 #define CAML_INTERNALS
 
-#define _DEFAULT_SOURCE
-
 /* The bytecode interpreter */
 #include <stdarg.h>
 #include <stdio.h>
-#include <sys/mman.h>
 #include "caml/alloc.h"
 #include "caml/backtrace.h"
 #include "caml/callback.h"
@@ -253,54 +250,18 @@ sp is a local copy of the global variable caml_extern_sp. */
 static intnat caml_bcodcount;
 #endif
 
-#ifdef THREADED_CODE
-/* Variables for the jit compiler */
-/* These are set by fix_code.c/startup.c */
-code_t jit_saved_code;
-asize_t jit_saved_code_len;
-/* These are local*/
-/* Various pointers to code templates */
-static void * *codetmpl_entry;
-static void * *codetmpl_exit;
-static void *check_stacks_entry;
-static void *check_stacks_exit;
-static void *process_signal_entry;
-static void *process_signal_exit;
-static void *perform_return_entry;
-static void *perform_return_exit;
-static void *trampoline_internal_entry;
-static void *trampoline_internal_exit;
-static void *POPTRAP_trampoline_entry;
-static void *POPTRAP_trampoline_exit;
-static void *RAISE_trampoline_entry;
-static void *RAISE_trampoline_exit;
-static void *dbg_trampoline_entry;
-static void *dbg_trampoline_exit;
-#ifdef DUMP_JIT_OPCODES
-static void *echo_entry;
-static void *echo_exit;
-#endif
-static long max_template_size;
-
-/* Target table */
-static void* *tgt_table;
-
-/* The compiled binary code (useless, may be used in future to free memory) */
-static void *binary = 0;
-
-#ifdef DUMP_JIT_OPCODES
+#if defined(THREADED_CODE) && defined(DUMP_JIT_OPCODES)
 char *mnemonic(opcode_t x) {
 return (
 #   include "caml/mnem.h"
     "INVALID_BYTECODE" );
 }
 #endif
-#endif
 
 
 /* The interpreter itself */
 
-value caml_interprete(code_t prog, asize_t prog_size)
+value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
 {
 #ifdef PC_REG
   register code_t pc PC_REG;
@@ -340,33 +301,11 @@ value caml_interprete(code_t prog, asize_t prog_size)
   static void * _codetmpl_exit[] = {
 #    include "caml/codetmpl_exit.h"
   };
-
-  /* initializes pointers to code templates */
-  codetmpl_entry = jumptable;
-  codetmpl_exit = _codetmpl_exit;
-  check_stacks_entry = &&check_stacks;
-  check_stacks_exit = &&InstructEnd(CHECK_SIGNALS);
-  process_signal_entry = &&process_signal;
-  process_signal_exit = &&InstructEnd(CHECK_SIGNALS);
-  perform_return_entry = &&perform_return;
-  perform_return_exit = &caml_prepare_bytecode;
-  trampoline_internal_entry = &&lbl_trampoline_internal;
-  trampoline_internal_exit = &&lbl_end_trampoline_internal;
-  POPTRAP_trampoline_entry = &&lbl_POPTRAP_trampoline;
-  POPTRAP_trampoline_exit = &&lbl_end_POPTRAP_trampoline;
-  RAISE_trampoline_entry = &&lbl_RAISE_trampoline;
-  RAISE_trampoline_exit = &&lbl_end_RAISE_trampoline;
-  dbg_trampoline_entry = &&lbl_dbg_trampoline;
-  dbg_trampoline_exit = &&lbl_end_dbg_trampoline;
-#ifdef DUMP_JIT_OPCODES
-  echo_entry = &&lbl_echo;
-  echo_exit = &&lbl_end_echo;
-#endif
 #endif
 
   /* Local pointers to global data, used to force correct addressing in asm */
   void* *_jumptable = jumptable; 
-  void* *_tgt_table = tgt_table;
+  void* *_tgt_table = (jit == 0 ? 0 : jit->tgt_table);
 #if defined(THREADED_CODE) && defined(DUMP_JIT_OPCODES)
   code_t _jit_saved_code = jit_saved_code;
   const char *_echo_fmt = "%d %s\n";
@@ -420,6 +359,28 @@ value caml_interprete(code_t prog, asize_t prog_size)
     caml_instr_table = (char **) jumptable;
     caml_instr_base = Jumptbl_base;
 
+    /* initializes the jit by setting pointers to code templates */
+    codetmpl_entry = jumptable;
+    codetmpl_exit = _codetmpl_exit;
+    check_stacks_entry = &&check_stacks;
+    check_stacks_exit = &&InstructEnd(CHECK_SIGNALS);
+    process_signal_entry = &&process_signal;
+    process_signal_exit = &&InstructEnd(CHECK_SIGNALS);
+    perform_return_entry = &&perform_return;
+    perform_return_exit = &caml_prepare_bytecode;
+    trampoline_internal_entry = &&lbl_trampoline_internal;
+    trampoline_internal_exit = &&lbl_end_trampoline_internal;
+    POPTRAP_trampoline_entry = &&lbl_POPTRAP_trampoline;
+    POPTRAP_trampoline_exit = &&lbl_end_POPTRAP_trampoline;
+    RAISE_trampoline_entry = &&lbl_RAISE_trampoline;
+    RAISE_trampoline_exit = &&lbl_end_RAISE_trampoline;
+    dbg_trampoline_entry = &&lbl_dbg_trampoline;
+    dbg_trampoline_exit = &&lbl_end_dbg_trampoline;
+  #ifdef DUMP_JIT_OPCODES
+    echo_entry = &&lbl_echo;
+    echo_exit = &&lbl_end_echo;
+  #endif
+
     /* calculates the maximum size of the binary code blocks
      * that implement the semantics of the bytecodes, and
      * creates a sufficiently big buffer
@@ -464,19 +425,9 @@ value caml_interprete(code_t prog, asize_t prog_size)
   accu = Val_int(0);
 
 #ifdef THREADED_CODE
-  /* TODO this is just for testing! Compilation should be triggered externally! */
-  int frobaz = 0;
-  void compile(void);
-  if (frobaz) {
-    compile();
-    _tgt_table = tgt_table;
-  }
 
   /* if there is a compiled binary, executes it... */
-  if (frobaz) {
-#if 0
   if (_tgt_table != 0) {
-#endif
     JitNext;
   }
   /* ...otherwise goes on */
@@ -1855,116 +1806,3 @@ void caml_release_bytecode(code_t prog, asize_t prog_size) {
   Assert(prog);
   Assert(prog_size>0);
 }
-
-#ifdef THREADED_CODE
-
-#define MayJump(opcode) \
-  (((opcode) == APPLY)       || ((opcode) == APPLY1)   || ((opcode) == APPLY2)        || \
-	 ((opcode) == APPLY3)      || ((opcode) == APPTERM)  || ((opcode) == APPTERM1)      || \
-	 ((opcode) == APPTERM2)    || ((opcode) == APPTERM3) || ((opcode) == RETURN)        || \
-	 ((opcode) == GRAB)        || ((opcode) == BRANCH)   || ((opcode) == BRANCHIF)      || \
-	 ((opcode) == BRANCHIFNOT) || ((opcode) == SWITCH)   || ((opcode) == BEQ)           || \
-	 ((opcode) == BNEQ)        || ((opcode) == BLTINT)   || ((opcode) == BLEINT)        || \
-	 ((opcode) == BGTINT)      || ((opcode) == BGEINT)   || ((opcode) == BULTINT)       || \
-	 ((opcode) == BUGEINT))
-
-#define MustCheckStack(opcode) \
-  (((opcode) == APPLY)       || ((opcode) == APPLY1)   || ((opcode) == APPLY2)        || \
-   ((opcode) == APPLY3)      || ((opcode) == APPTERM)  || ((opcode) == APPTERM1)      || \
-   ((opcode) == APPTERM2)    || ((opcode) == APPTERM3))
-
-#define CopyCode(entry, exit) \
-    { \
-      unsigned char *from; \
-      for (from = (unsigned char *) (entry); \
-           from != (unsigned char *) (exit); ++from, ++to) { \
-        *to = *from; \
-        ++compiled_code_size; \
-      } \
-    }
-
-int bytecode_size(int ofst) {
-  /* shamelessly stolen from caml_thread_code */
-  opcode_t instr = jit_saved_code[ofst];
-  if (instr == SWITCH) {
-    uint32_t sizes = jit_saved_code[ofst + 1];
-    uint32_t const_size = sizes & 0xFFFF;
-    uint32_t block_size = sizes >> 16;
-    return const_size + block_size + 2;
-  } else if (instr == CLOSUREREC) {
-    uint32_t nfuncs = jit_saved_code[ofst + 1];
-    return nfuncs + 3;
-  } else {
-    int* l = caml_init_opcode_nargs();
-    return l[instr] + 1;
-  }
-}
-
-void compile() {
-  int compiled_code_size;
-
-  unsigned char *code_buffer =
-    (unsigned char *) mmap(0, jit_saved_code_len * sizeof(unsigned char) * max_template_size,
-         PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-
-  /* allocates the tgt_table */
-  tgt_table = caml_stat_alloc(jit_saved_code_len * sizeof(void *)); /* TODO is it ok, or should we use malloc? */
-
-  /* dispatches on source code and copies the
-   * corresponding blocks in a buffer; at the
-   * same times builds the target table
-   */
-  compiled_code_size = 0;
-  unsigned char *to = code_buffer;
-  unsigned long long ofst;
-  for (ofst = 0; ofst < jit_saved_code_len; ) {
-    /* updates tgt_table */
-    tgt_table[ofst] = to;
-
-    /* appends in code_buffer the translation of the bytecode */
-    opcode_t cur_bytecode = jit_saved_code[ofst];
-#ifdef DUMP_JIT_OPCODES
-    CopyCode(echo_entry, echo_exit);
-#endif
-    CopyCode(codetmpl_entry[cur_bytecode], codetmpl_exit[cur_bytecode]);
-
-    /* possibly appends the check stacks code */
-    if (MustCheckStack(cur_bytecode)) {
-      CopyCode(check_stacks_entry, check_stacks_exit);
-    }
-
-    /* handles POPTRAP */
-    if (cur_bytecode == POPTRAP) {
-      CopyCode(POPTRAP_trampoline_entry, POPTRAP_trampoline_exit);
-      CopyCode(process_signal_entry, process_signal_exit);
-    }
-
-    /* handles RAISE_NOTRACE, RERAISE, RAISE */
-    if (cur_bytecode == RAISE_NOTRACE || cur_bytecode == RERAISE || cur_bytecode == RAISE) {
-      CopyCode(RAISE_trampoline_entry, RAISE_trampoline_exit);
-      CopyCode(perform_return_entry, perform_return_exit);
-    }
-
-    /* handles EVENT and BREAK */
-    if (cur_bytecode == EVENT || cur_bytecode == BREAK) {
-      CopyCode(dbg_trampoline_entry, dbg_trampoline_exit);
-    }
-
-    /* if the bytecode may jump appends the trampoline (except for raise bytecodes
-     * that have their own)
-     */
-    if (MayJump(cur_bytecode)) {
-      CopyCode(trampoline_internal_entry, trampoline_internal_exit);
-    }
-
-    ofst += bytecode_size(ofst);
-  }
-
-  /* makes the buffer executable */
-  mprotect(code_buffer, compiled_code_size, PROT_READ | PROT_EXEC);
-
-  /* stores the compiled code */
-  binary = code_buffer;
-}
-
-#endif

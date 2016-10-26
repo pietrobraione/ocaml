@@ -20,22 +20,18 @@
 
 #ifdef CAML_INTERNALS
 
+#include "jit.h"
 #include "misc.h"
 #include "mlvalues.h"
 
 /* interpret a bytecode */
-value caml_interprete (code_t prog, asize_t prog_size);
+value caml_interprete (code_t prog, asize_t prog_size, struct jit_context *jit);
 
 /* tell the runtime that a bytecode program might be needed */
 void caml_prepare_bytecode(code_t prog, asize_t prog_size);
 
 /* tell the runtime that a bytecode program is no more needed */
 void caml_release_bytecode(code_t prog, asize_t prog_size);
-
-#ifdef THREADED_CODE
-extern code_t jit_saved_code;
-extern asize_t jit_saved_code_len;
-#endif
 
 #endif /* CAML_INTERNALS */
 

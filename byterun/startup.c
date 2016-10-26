@@ -349,11 +349,18 @@ CAMLexport void caml_main(char **argv)
   caml_init_atom_table();
   caml_init_backtrace();
   /* Initialize the interpreter */
-  caml_interprete(NULL, 0);
+  caml_interprete(NULL, 0, 0);
   /* Initialize the debugger, if needed */
   caml_debugger_init();
   /* Load the code */
   caml_code_size = caml_seek_section(fd, &trail, "CODE");
+#ifdef THREADED_CODE
+#if 0
+  /* compile before loading code because it does threading */
+  struct jit_context compiled_code;
+  jit_compile(caml_start_code, caml_code_size / sizeof(opcode_t));
+#endif
+#endif
   caml_load_code(fd, caml_code_size);
   caml_init_debug_info();
   /* Build the table of primitives */
@@ -383,7 +390,11 @@ CAMLexport void caml_main(char **argv)
 #endif
   /* Execute the program */
   caml_debugger(PROGRAM_START);
-  res = caml_interprete(caml_start_code, caml_code_size);
+#if 0
+  res = caml_interprete(caml_start_code, caml_code_size, &compiled_code);
+#else
+  res = caml_interprete(caml_start_code, caml_code_size, 0);
+#endif
   if (Is_exception_result(res)) {
     caml_exn_bucket = Extract_exception(res);
     if (caml_debugger_in_use) {
@@ -431,7 +442,7 @@ CAMLexport void caml_startup_code(
   caml_init_atom_table();
   caml_init_backtrace();
   /* Initialize the interpreter */
-  caml_interprete(NULL, 0);
+  caml_interprete(NULL, 0, 0);
   /* Initialize the debugger, if needed */
   caml_debugger_init();
   /* Load the code */
@@ -439,18 +450,6 @@ CAMLexport void caml_startup_code(
   caml_code_size = code_size;
   caml_init_code_fragments();
   caml_init_debug_info();
-#ifdef THREADED_CODE
-  {
-    jit_saved_code = (code_t) caml_stat_alloc(caml_code_size);
-    jit_saved_code_len = caml_code_size / sizeof(opcode_t);
-    code_t from = caml_start_code;
-    code_t to = jit_saved_code;
-    asize_t count;
-    for (count = 0; count < jit_saved_code_len; ++count) {
-      *to++ = *from++;
-    }
-  }
-#endif
   if (caml_debugger_in_use) {
     int len, i;
     len = code_size / sizeof(opcode_t);
@@ -458,6 +457,10 @@ CAMLexport void caml_startup_code(
     for (i = 0; i < len; i++) caml_saved_code[i] = caml_start_code[i];
   }
 #ifdef THREADED_CODE
+#if 0
+  struct jit_context compiled_code;
+  jit_compile(caml_start_code, caml_code_size / sizeof(opcode_t));
+#endif
   caml_thread_code(caml_start_code, code_size);
 #endif
   /* Use the builtin table of primitives */
@@ -475,7 +478,7 @@ CAMLexport void caml_startup_code(
   caml_stat_free(exe_name);
   /* Execute the program */
   caml_debugger(PROGRAM_START);
-  res = caml_interprete(caml_start_code, caml_code_size);
+  res = caml_interprete(caml_start_code, caml_code_size, 0);
   if (Is_exception_result(res)) {
     caml_exn_bucket = Extract_exception(res);
     if (caml_debugger_in_use) {
