@@ -43,14 +43,14 @@ void *echo_exit = 0;
 long max_template_size;
 
 #define MayJump(opcode) \
-  (((opcode) == APPLY)       || ((opcode) == APPLY1)   || ((opcode) == APPLY2)        || \
-   ((opcode) == APPLY3)      || ((opcode) == APPTERM)  || ((opcode) == APPTERM1)      || \
-   ((opcode) == APPTERM2)    || ((opcode) == APPTERM3) || ((opcode) == RETURN)        || \
-   ((opcode) == GRAB)        || ((opcode) == BRANCH)   || ((opcode) == BRANCHIF)      || \
-   ((opcode) == BRANCHIFNOT) || ((opcode) == SWITCH)   || ((opcode) == BEQ)           || \
-   ((opcode) == BNEQ)        || ((opcode) == BLTINT)   || ((opcode) == BLEINT)        || \
-   ((opcode) == BGTINT)      || ((opcode) == BGEINT)   || ((opcode) == BULTINT)       || \
-   ((opcode) == BUGEINT))
+  (((opcode) == APPLY)       || ((opcode) == APPLY1)   || ((opcode) == APPLY2)   || \
+   ((opcode) == APPLY3)      || ((opcode) == APPTERM)  || ((opcode) == APPTERM1) || \
+   ((opcode) == APPTERM2)    || ((opcode) == APPTERM3) || ((opcode) == RETURN)   || \
+   ((opcode) == GRAB)        || ((opcode) == BRANCH)   || ((opcode) == BRANCHIF) || \
+   ((opcode) == BRANCHIFNOT) || ((opcode) == SWITCH)   || ((opcode) == POPTRAP)  || \
+   ((opcode) == BEQ)         || ((opcode) == BNEQ)     || ((opcode) == BLTINT)   || \
+   ((opcode) == BLEINT)      || ((opcode) == BGTINT)   || ((opcode) == BGEINT)   || \
+   ((opcode) == BULTINT)     || ((opcode) == BUGEINT))
 
 #define MustCheckStack(opcode) \
   (((opcode) == APPLY)       || ((opcode) == APPLY1)   || ((opcode) == APPLY2)        || \
@@ -91,8 +91,13 @@ void jit_compile(code_t code, asize_t code_len, struct jit_context *result) {
     (unsigned char *) mmap(0, code_len * sizeof(unsigned char) * max_template_size,
          PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
+#ifdef DUMP_JIT_OPCODES
+  /* allocates space for a copy of the code */
+  result->code = caml_stat_alloc(code_len * sizeof(opcode_t));
+#endif
+
   /* allocates the tgt_table */
-  result->tgt_table = caml_stat_alloc(code_len * sizeof(void *)); /* TODO is it ok, or should we use malloc? */
+  result->tgt_table = caml_stat_alloc(code_len * sizeof(void *));
 
   /* dispatches on source code and copies the
    * corresponding blocks in a buffer; at the
@@ -102,11 +107,17 @@ void jit_compile(code_t code, asize_t code_len, struct jit_context *result) {
   unsigned char *to = code_buffer;
   unsigned long long ofst;
   for (ofst = 0; ofst < code_len; ) {
+    opcode_t cur_bytecode = code[ofst];
+
+#ifdef DUMP_JIT_OPCODES
+    /* updates code */
+    result->code[ofst] = cur_bytecode;
+#endif
+
     /* updates tgt_table */
     result->tgt_table[ofst] = to;
 
     /* appends in code_buffer the translation of the bytecode */
-    opcode_t cur_bytecode = code[ofst];
 #ifdef DUMP_JIT_OPCODES
     CopyCode(echo_entry, echo_exit);
 #endif

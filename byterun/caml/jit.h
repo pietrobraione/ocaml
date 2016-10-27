@@ -43,6 +43,9 @@ CAMLextern long max_template_size;
 
 /* The result of the compilation produced by the jit */
 struct jit_context {
+#ifdef DUMP_JIT_OPCODES
+  code_t code;
+#endif
   void* *tgt_table;
   void *binary;
 };

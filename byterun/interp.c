@@ -307,7 +307,6 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
   void* *_jumptable = jumptable; 
   void* *_tgt_table = (jit == 0 ? 0 : jit->tgt_table);
 #if defined(THREADED_CODE) && defined(DUMP_JIT_OPCODES)
-  code_t _jit_saved_code = jit_saved_code;
   const char *_echo_fmt = "%d %s\n";
 #endif
 #if defined(CAML_METHOD_CACHE) && defined(CAML_TEST_CACHE)
@@ -486,7 +485,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
 
 #if defined(THREADED_CODE) && defined(DUMP_JIT_OPCODES)
     lbl_echo:
-      _F_stderrprintf(_echo_fmt, pc - prog, _F_mnemonic(_jit_saved_code[pc - prog]));
+      _F_stderrprintf(_echo_fmt, pc - prog, _F_mnemonic(jit->code[pc - prog]));
     lbl_end_echo:
 #endif
 
