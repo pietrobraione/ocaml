@@ -141,6 +141,9 @@ void jit_compile(code_t code, asize_t code_len, struct jit_context *result) {
     }
 
     /* handles EVENT and BREAK */
+    /* note that right now jit is inactive during debugging,
+     * thus this case is unused
+     */
     if (cur_bytecode == EVENT || cur_bytecode == BREAK) {
       CopyCode(dbg_trampoline_entry, dbg_trampoline_exit);
     }

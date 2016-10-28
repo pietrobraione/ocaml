@@ -359,7 +359,9 @@ CAMLexport void caml_main(char **argv)
 #if 1
   /* compile before threading */
   struct jit_context compiled_code;
-  jit_compile(caml_start_code, caml_code_size / sizeof(opcode_t), &compiled_code);
+  if (!caml_debugger_in_use) {
+    jit_compile(caml_start_code, caml_code_size / sizeof(opcode_t), &compiled_code);
+  }
 #endif
   /* Better to thread now than at the beginning of [caml_interprete],
      since the debugger interface needs to perform SET_EVENT requests
@@ -395,7 +397,7 @@ CAMLexport void caml_main(char **argv)
   /* Execute the program */
   caml_debugger(PROGRAM_START);
 #if 1
-  res = caml_interprete(caml_start_code, caml_code_size, &compiled_code);
+  res = caml_interprete(caml_start_code, caml_code_size, (caml_debugger_in_use ? 0 : &compiled_code));
 #else
   res = caml_interprete(caml_start_code, caml_code_size, 0);
 #endif
