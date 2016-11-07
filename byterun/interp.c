@@ -100,24 +100,24 @@ sp is a local copy of the global variable caml_extern_sp. */
 #ifdef THREADED_CODE
 #  define Instruct(name) lbl_##name
 #  define InstructEnd(name) lbl_end_##name
-/* Next:         from interpreted to interpreted
- * JitNext:      from interpreted/compiled to compiled
- * BreakoutNext: from compiled to interpreted (currently missing)
- * DebugNext:    from compiled to interpreted, in the case of EVENT and BREAK bytecodes
- */
 #  if defined(ARCH_SIXTYFOUR) && !defined(ARCH_CODE32)
 #    define Jumptbl_base ((char *) &&lbl_ACC0)
 #  else
 #    define Jumptbl_base ((char *) 0)
 #    define jumptbl_base ((char *) 0)
 #  endif
+/* Next:         from interpreted to interpreted
+ * JitNext:      from interpreted/compiled to compiled
+ * BreakoutNext: from compiled to interpreted (currently missing)
+ * DebugNext:    from compiled to interpreted, in the case of EVENT and BREAK bytecodes
+ */
 #  ifdef DEBUG
 #    define Next goto next_instr
 #  else
 #    define Next goto *(void *)(jumptbl_base + *pc)
 #  endif
-#define JitNext   __asm__ volatile("jmp *%0" : : "r" (_tgt_table[pc - prog]), "r" (_tgt_table), "r" (pc), "r" (prog))
-#define DebugNext __asm__ volatile("jmp *%0" : : "r" (_jumptable[(*_P_caml_saved_code)[pc - *_P_caml_start_code]]), "r" (_jumptable), "r" (_P_caml_saved_code), "r" (pc), "r" (_P_caml_start_code))
+#define JitNext   __asm__ __volatile__ ("jmp *%0" : : "r" (_tgt_table[pc - prog]), "r" (_tgt_table), "r" (pc), "r" (prog))
+#define DebugNext __asm__ __volatile__ ("jmp *%0" : : "r" (_jumptable[(*_P_caml_saved_code)[pc - *_P_caml_start_code]]), "r" (_jumptable), "r" (_P_caml_saved_code), "r" (pc), "r" (_P_caml_start_code))
 #else
 #  define Instruct(name) case name
 #  define Next break
@@ -304,53 +304,53 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
 #endif
 
   /* Local pointers to global data, used to force correct addressing in asm */
-  void* *_jumptable = jumptable; 
-  void* *_tgt_table = (jit == 0 ? 0 : jit->tgt_table);
+  void*      *volatile _jumptable     = jumptable;
+  void*      *volatile _tgt_table     = (jit == 0 ? 0 : jit->tgt_table);
 #if defined(THREADED_CODE) && defined(DUMP_JIT_OPCODES)
-  const char *_echo_fmt = "%d %s\n";
+  const char *volatile _echo_fmt      = "%d %s\n";
 #endif
 #if defined(CAML_METHOD_CACHE) && defined(CAML_TEST_CACHE)
-  const char *_cache_hit_fmt = "cache hit = %d%%\n";
+  const char *volatile _cache_hit_fmt = "cache hit = %d%%\n";
 #endif
 
   /* Pointers to extern data, used to force correct addressing in asm */
-  value*                 *_P_caml_young_ptr        = &caml_young_ptr;
-  value*                 *_P_caml_young_trigger    = &caml_young_trigger;
-  value                  *_P_caml_global_data      = &caml_global_data;
-  struct ext_table       *_P_caml_prim_table       = &caml_prim_table;
-  value*                 *_P_caml_stack_high       = &caml_stack_high;
-  value*                 *_P_caml_stack_threshold  = &caml_stack_threshold;
-  value*                 *_P_caml_extern_sp        = &caml_extern_sp;
-  value*                 *_P_caml_trapsp           = &caml_trapsp;
-  value*                 *_P_caml_trap_barrier     = &caml_trap_barrier;
-  volatile int           *_P_caml_something_to_do  = &caml_something_to_do;
-  int32_t                *_P_caml_backtrace_active = &caml_backtrace_active;
-  struct longjmp_buffer* *_P_caml_external_raise   = &caml_external_raise;
-  int                    *_P_caml_callback_depth   = &caml_callback_depth;
-  unsigned char*         *_P_caml_saved_code       = &caml_saved_code;
-  code_t                 *_P_caml_start_code       = &caml_start_code;
-  uintnat                *_P_caml_event_count      = &caml_event_count;
-  header_t               (*_P_caml_atom_table)[]   = &caml_atom_table;
+  value*                 *volatile _P_caml_young_ptr        = &caml_young_ptr;
+  value*                 *volatile _P_caml_young_trigger    = &caml_young_trigger;
+  value                  *volatile _P_caml_global_data      = &caml_global_data;
+  struct ext_table       *volatile _P_caml_prim_table       = &caml_prim_table;
+  value*                 *volatile _P_caml_stack_high       = &caml_stack_high;
+  value*                 *volatile _P_caml_stack_threshold  = &caml_stack_threshold;
+  value*                 *volatile _P_caml_extern_sp        = &caml_extern_sp;
+  value*                 *volatile _P_caml_trapsp           = &caml_trapsp;
+  value*                 *volatile _P_caml_trap_barrier     = &caml_trap_barrier;
+  volatile int           *volatile _P_caml_something_to_do  = &caml_something_to_do;
+  int32_t                *volatile _P_caml_backtrace_active = &caml_backtrace_active;
+  struct longjmp_buffer* *volatile _P_caml_external_raise   = &caml_external_raise;
+  int                    *volatile _P_caml_callback_depth   = &caml_callback_depth;
+  unsigned char*         *volatile _P_caml_saved_code       = &caml_saved_code;
+  code_t                 *volatile _P_caml_start_code       = &caml_start_code;
+  uintnat                *volatile _P_caml_event_count      = &caml_event_count;
+  header_t               (*volatile _P_caml_atom_table)[]   = &caml_atom_table;
 
   /* Pointers to functions, used to force correct addressing in asm */
 #if defined(NATIVE_CODE) && defined(WITH_SPACETIME)
-  uintnat (*_F_caml_spacetime_my_profinfo)(void) = caml_spacetime_my_profinfo;
+  uintnat (*volatile _F_caml_spacetime_my_profinfo)(void) = caml_spacetime_my_profinfo;
 #endif
-  void    (*_F_caml_gc_dispatch)(void)           = caml_gc_dispatch;
-  value   (*_F_caml_alloc_shr)(mlsize_t, tag_t)  = caml_alloc_shr;
-  void    (*_F_caml_initialize)(value*, value)   = caml_initialize;
-  void    (*_F_caml_modify)(value*, value)       = caml_modify;
-  void    (*_F_caml_debugger)(enum event_kind)   = caml_debugger;
-  void    (*_F_caml_stash_backtrace)(value, code_t, value*, int)
+  void    (*volatile _F_caml_gc_dispatch)(void)           = caml_gc_dispatch;
+  value   (*volatile _F_caml_alloc_shr)(mlsize_t, tag_t)  = caml_alloc_shr;
+  void    (*volatile _F_caml_initialize)(value*, value)   = caml_initialize;
+  void    (*volatile _F_caml_modify)(value*, value)       = caml_modify;
+  void    (*volatile _F_caml_debugger)(enum event_kind)   = caml_debugger;
+  void    (*volatile _F_caml_stash_backtrace)(value, code_t, value*, int)
                                                  = caml_stash_backtrace;
-  void    (*_F_caml_realloc_stack)(asize_t)      = caml_realloc_stack;
-  void    (*_F_caml_process_event)(void)         = caml_process_event;
-  void    (*_F_caml_raise_zero_divide)(void)     = caml_raise_zero_divide;
+  void    (*volatile _F_caml_realloc_stack)(asize_t)      = caml_realloc_stack;
+  void    (*volatile _F_caml_process_event)(void)         = caml_process_event;
+  void    (*volatile _F_caml_raise_zero_divide)(void)     = caml_raise_zero_divide;
 #if (defined(THREADED_CODE) && defined(DUMP_JIT_OPCODES)) || (defined(CAML_METHOD_CACHE) && defined(CAML_TEST_CACHE))
-  int     (*_F_stderrprintf)(const char*, ...)   = stderrprintf;
+  int     (*volatile _F_stderrprintf)(const char*, ...)   = stderrprintf;
 #endif
 #if defined(THREADED_CODE) && defined(DUMP_JIT_OPCODES)
-  char*   (*_F_mnemonic)(opcode_t)               = mnemonic;
+  char*   (*volatile _F_mnemonic)(opcode_t)               = mnemonic;
 #endif
 
   if (prog == NULL) {           /* Interpreter is initializing */
@@ -424,10 +424,9 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
   accu = Val_int(0);
 
 #ifdef THREADED_CODE
-
   /* if there is a compiled binary, executes it... */
   if (_tgt_table != 0) {
-    JitNext;
+    goto lbl_trampoline_internal;
   }
   /* ...otherwise goes on */
 
@@ -461,7 +460,9 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
     switch(curr_instr) {
 #endif
 
+#ifdef THREADED_CODE
 /* Unreachable operations used as templates for jit compilation */
+
     lbl_trampoline_internal:
       JitNext;
     lbl_end_trampoline_internal:
@@ -483,10 +484,11 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       DebugNext;
     lbl_end_dbg_trampoline:
 
-#if defined(THREADED_CODE) && defined(DUMP_JIT_OPCODES)
+#ifdef DUMP_JIT_OPCODES
     lbl_echo:
       _F_stderrprintf(_echo_fmt, pc - prog, _F_mnemonic(jit->code[pc - prog]));
     lbl_end_echo:
+#endif
 #endif
 
 /* Basic stack operations */
