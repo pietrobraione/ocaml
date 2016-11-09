@@ -27,6 +27,8 @@ CAMLextern void *perform_return_entry;
 CAMLextern void *perform_return_exit;
 CAMLextern void *trampoline_internal_entry;
 CAMLextern void *trampoline_internal_exit;
+CAMLextern void *trampoline_breakout_entry;
+CAMLextern void *trampoline_breakout_exit;
 CAMLextern void *POPTRAP_trampoline_entry;
 CAMLextern void *POPTRAP_trampoline_exit;
 CAMLextern void *RAISE_trampoline_entry;
@@ -50,7 +52,7 @@ struct jit_context {
   void *binary;
 };
 
-CAMLextern void jit_compile (code_t code, asize_t code_len, struct jit_context *result);
+CAMLextern void jit_compile (code_t code, asize_t code_start, asize_t code_end, struct jit_context *result);
 
 #endif /* THREADED_CODE */
 #endif /* CAML_JIT_H */

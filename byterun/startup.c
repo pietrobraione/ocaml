@@ -360,7 +360,7 @@ CAMLexport void caml_main(char **argv)
   /* compile before threading */
   struct jit_context compiled_code;
   if (!caml_debugger_in_use) {
-    jit_compile(caml_start_code, caml_code_size / sizeof(opcode_t), &compiled_code);
+    jit_compile(caml_start_code, 0, caml_code_size / sizeof(opcode_t), &compiled_code);
   }
 #endif
   /* Better to thread now than at the beginning of [caml_interprete],
@@ -465,7 +465,7 @@ CAMLexport void caml_startup_code(
 #ifdef THREADED_CODE
 #if 0
   struct jit_context compiled_code;
-  jit_compile(caml_start_code, caml_code_size / sizeof(opcode_t), &compiled_code);
+  jit_compile(caml_start_code, 0, caml_code_size / sizeof(opcode_t), &compiled_code);
 #endif
   caml_thread_code(caml_start_code, code_size);
 #endif

@@ -28,6 +28,8 @@ void *perform_return_entry = 0;
 void *perform_return_exit = 0;
 void *trampoline_internal_entry = 0;
 void *trampoline_internal_exit = 0;
+void *trampoline_breakout_entry = 0;
+void *trampoline_breakout_exit = 0;
 void *POPTRAP_trampoline_entry = 0;
 void *POPTRAP_trampoline_exit = 0;
 void *RAISE_trampoline_entry = 0;
@@ -61,9 +63,9 @@ long max_template_size;
     { \
       unsigned char *from; \
       for (from = (unsigned char *) (entry); \
-           from != (unsigned char *) (exit); ++from, ++to) { \
+           from != (unsigned char *) (exit); \
+	   ++from, ++to, ++compiled_code_size) { \
         *to = *from; \
-        ++compiled_code_size; \
       } \
     }
 
@@ -84,15 +86,26 @@ int bytecode_size(code_t code, int ofst) {
   }
 }
 
-void jit_compile(code_t code, asize_t code_len, struct jit_context *result) {
-  int compiled_code_size;
+void jit_compile(code_t code, asize_t code_start, asize_t code_end, struct jit_context *result) {
+  asize_t code_len = code_end - code_start + 1;
 
+  /* allocates memory for the compiled code */
   unsigned char *code_buffer =
     (unsigned char *) mmap(0, code_len * sizeof(unsigned char) * max_template_size,
          PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
+  /*
+  if (code_buffer == MAP_FAILED) {
 #ifdef DUMP_JIT_OPCODES
-  /* allocates space for a copy of the code */
+    result->code = 0;
+#endif
+    result->tgt_table = 0;
+    return;
+  }
+  */
+
+#ifdef DUMP_JIT_OPCODES
+  /* allocates for a copy of the code */
   result->code = caml_stat_alloc(code_len * sizeof(opcode_t));
 #endif
 
@@ -103,10 +116,10 @@ void jit_compile(code_t code, asize_t code_len, struct jit_context *result) {
    * corresponding blocks in a buffer; at the
    * same times builds the target table
    */
-  compiled_code_size = 0;
+  int compiled_code_size = 0;
   unsigned char *to = code_buffer;
   unsigned long long ofst;
-  for (ofst = 0; ofst < code_len; ) {
+  for (ofst = code_start; ofst < code_end; ofst += bytecode_size(code, ofst)) {
     opcode_t cur_bytecode = code[ofst];
 
 #ifdef DUMP_JIT_OPCODES
@@ -141,22 +154,24 @@ void jit_compile(code_t code, asize_t code_len, struct jit_context *result) {
     }
 
     /* handles EVENT and BREAK */
-    /* note that right now jit is inactive during debugging,
-     * thus this case is unused
+    /* (note that right now jit is inactive during debugging,
+     * thus this case is unused)
      */
     if (cur_bytecode == EVENT || cur_bytecode == BREAK) {
       CopyCode(dbg_trampoline_entry, dbg_trampoline_exit);
     }
 
-    /* if the bytecode may jump appends the trampoline (except for raise bytecodes
-     * that have their own)
+    /* if the bytecode may jump appends the internal trampoline 
+     * (except for raise bytecodes that have their own)
      */
     if (MayJump(cur_bytecode)) {
       CopyCode(trampoline_internal_entry, trampoline_internal_exit);
     }
-
-    ofst += bytecode_size(code, ofst);
   }
+
+  /* appends the breakout trampoline */
+  CopyCode(trampoline_breakout_entry, trampoline_breakout_exit);
+
 
   /* makes the buffer executable */
   mprotect(code_buffer, compiled_code_size, PROT_READ | PROT_EXEC);

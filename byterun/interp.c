@@ -50,6 +50,13 @@ int stderrprintf(const char *fmt, ...) {
 }
 #endif
 
+#ifdef THREADED_CODE
+void skip(void) { }
+#define Skip skip()
+#else
+#define Skip
+#endif
+
 /* Redefinition of macros */
 /* Declared in memory.h */
 #if defined(NATIVE_CODE) && defined(WITH_SPACETIME)
@@ -106,22 +113,40 @@ sp is a local copy of the global variable caml_extern_sp. */
 #    define Jumptbl_base ((char *) 0)
 #    define jumptbl_base ((char *) 0)
 #  endif
-/* Next:         from interpreted to interpreted
+/* InterpNext:   from interpreted to interpreted
  * JitNext:      from interpreted/compiled to compiled
  * BreakoutNext: from compiled to interpreted (currently missing)
  * DebugNext:    from compiled to interpreted, in the case of EVENT and BREAK bytecodes
+ * Next:         from interpreted to interpreted/compiled
+ * InternalNext: from compiled to interpreted/compiled
  */
 #  ifdef DEBUG
-#    define Next goto next_instr
+#    define InterpNext goto next_instr
 #  else
-#    define Next goto *(void *)(jumptbl_base + *pc)
+#    define InterpNext goto *(void *)(jumptbl_base + *pc)
 #  endif
-#define JitNext   __asm__ __volatile__ ("jmp *%0" : : "r" (_tgt_table[pc - prog]), "r" (_tgt_table), "r" (pc), "r" (prog))
-#define DebugNext __asm__ __volatile__ ("jmp *%0" : : "r" (_jumptable[(*_P_caml_saved_code)[pc - *_P_caml_start_code]]), "r" (_jumptable), "r" (_P_caml_saved_code), "r" (pc), "r" (_P_caml_start_code))
+#  define JitNext       __asm__ __volatile__ ("jmp *%0" : : "r" (_tgt_table[pc - prog]), "r" (_tgt_table), "r" (pc), "r" (prog))
+#  define BreakoutNext  __asm__ __volatile__ ("jmp *%0" : : "r" (jumptbl_base + *pc), "r" (jumptbl_base), "r" (pc))
+/* TODO BreakoutNext in case DEBUG is defined */
+#  define DebugNext     __asm__ __volatile__ ("jmp *%0" : : "r" (_jumptable[(*_P_caml_saved_code)[pc - *_P_caml_start_code]]), "r" (_jumptable), "r" (_P_caml_saved_code), "r" (pc), "r" (_P_caml_start_code))
+#  define Next \
+  {							\
+    if (_tgt_table != 0 && _tgt_table[pc - prog] != 0)	\
+      JitNext;                                          \
+    else                                                \
+      InterpNext;                                       \
+  }
+#  define InternalNext \
+  {				     \
+    if (_tgt_table[pc - prog] != 0)  \
+      JitNext;                       \
+    else                             \
+      BreakoutNext;                  \
+  }
 #else
 #  define Instruct(name) case name
-#  define Next break
 #  define InstructEnd(name)
+#  define Next break
 #endif
 
 /* GC interface */
@@ -369,6 +394,8 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
     perform_return_exit = &caml_prepare_bytecode;
     trampoline_internal_entry = &&lbl_trampoline_internal;
     trampoline_internal_exit = &&lbl_end_trampoline_internal;
+    trampoline_breakout_entry = &&lbl_trampoline_breakout;
+    trampoline_breakout_exit = &&lbl_end_trampoline_breakout;
     POPTRAP_trampoline_entry = &&lbl_POPTRAP_trampoline;
     POPTRAP_trampoline_exit = &&lbl_end_POPTRAP_trampoline;
     RAISE_trampoline_entry = &&lbl_RAISE_trampoline;
@@ -464,18 +491,22 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
 /* Unreachable operations used as templates for jit compilation */
 
     lbl_trampoline_internal:
-      JitNext;
+      InternalNext;
     lbl_end_trampoline_internal:
+
+    lbl_trampoline_breakout:
+      BreakoutNext;
+    lbl_end_trampoline_breakout:
 
     lbl_POPTRAP_trampoline:
       if (!*_P_caml_something_to_do) {
-        JitNext;
+        InternalNext;
       } /* else, fall through */
     lbl_end_POPTRAP_trampoline:
 
     lbl_RAISE_trampoline:
       if (!raise_shall_return) {
-        JitNext;
+        InternalNext;
       } /* else, fall through */
     lbl_end_RAISE_trampoline:
 
@@ -696,6 +727,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       pc = Code_val(accu);
       env = accu;
     InstructEnd(APPLY):
+      Skip;
       goto check_stacks;
     }
 
@@ -711,6 +743,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       env = accu;
       extra_args = 0;
     InstructEnd(APPLY1):
+      Skip;
       goto check_stacks;
     }
 
@@ -728,6 +761,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       env = accu;
       extra_args = 1;
     InstructEnd(APPLY2):
+      Skip;
       goto check_stacks;
     }
 
@@ -747,6 +781,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       env = accu;
       extra_args = 2;
     InstructEnd(APPLY3):
+      Skip;
       goto check_stacks;
     }
 
@@ -765,6 +800,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       env = accu;
       extra_args += nargs - 1;
     InstructEnd(APPTERM):
+      Skip;
       goto check_stacks;
     }
 
@@ -776,6 +812,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       pc = Code_val(accu);
       env = accu;
     InstructEnd(APPTERM1):
+      Skip;
       goto check_stacks;
     }
 
@@ -790,6 +827,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       env = accu;
       extra_args += 1;
     InstructEnd(APPTERM2):
+      Skip;
       goto check_stacks;
     }
 
@@ -806,6 +844,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       env = accu;
       extra_args += 2;
     InstructEnd(APPTERM3):
+      Skip;
       goto check_stacks;
     }
 
