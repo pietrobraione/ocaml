@@ -27,6 +27,7 @@
 #include "caml/instrtrace.h"
 #include "caml/instruct.h"
 #include "caml/interp.h"
+#include "caml/jit.h"
 #include "caml/major_gc.h"
 #include "caml/memory.h"
 #include "caml/misc.h"
@@ -91,7 +92,6 @@ extern uintnat caml_spacetime_my_profinfo(struct ext_table**, uintnat);
 /* declared in mlvalues.h */
 #define _F_Atom(tag) (Val_hp (&((*_P_caml_atom_table) [(tag)])))
 
-
 /* Registers for the abstract machine:
         pc         the code pointer
         sp         the stack pointer (grows downward)
@@ -125,23 +125,23 @@ sp is a local copy of the global variable caml_extern_sp. */
 #  else
 #    define InterpNext goto *(void *)(jumptbl_base + *pc)
 #  endif
-#  define JitNext       __asm__ __volatile__ ("jmp *%0" : : "r" (_tgt_table[pc - prog]), "r" (_tgt_table), "r" (pc), "r" (prog))
+#  define JitNext       __asm__ __volatile__ ("jmp *%0" : : "r" (code_fragment_under_exec->tgt_table[pc - code_fragment_under_exec->code_start]), "r" (code_fragment_under_exec), "r" (pc))
 #  define BreakoutNext  __asm__ __volatile__ ("jmp *%0" : : "r" (jumptbl_base + *pc), "r" (jumptbl_base), "r" (pc))
 /* TODO BreakoutNext in case DEBUG is defined */
 #  define DebugNext     __asm__ __volatile__ ("jmp *%0" : : "r" (_jumptable[(*_P_caml_saved_code)[pc - *_P_caml_start_code]]), "r" (_jumptable), "r" (_P_caml_saved_code), "r" (pc), "r" (_P_caml_start_code))
 #  define Next \
   {							\
-    if (_tgt_table != 0 && _tgt_table[pc - prog] != 0)	\
-      JitNext;                                          \
-    else                                                \
-      InterpNext;                                       \
+    if (code_fragment_under_exec != 0 && code_fragment_under_exec->tgt_table[pc - code_fragment_under_exec->code_start] != 0)	\
+      JitNext; \
+    else \
+      InterpNext; \
   }
 #  define InternalNext \
-  {				     \
-    if (_tgt_table[pc - prog] != 0)  \
-      JitNext;                       \
-    else                             \
-      BreakoutNext;                  \
+  { \
+    if (code_fragment_under_exec->tgt_table[pc - code_fragment_under_exec->code_start] != 0)  \
+      JitNext; \
+    else \
+      BreakoutNext; \
   }
 #else
 #  define Instruct(name) case name
@@ -156,9 +156,9 @@ sp is a local copy of the global variable caml_extern_sp. */
 #define Restore_after_gc \
   { accu = sp[0]; env = sp[1]; sp += 2; }
 #define Setup_for_c_call \
-  { saved_pc = pc; *--sp = env; *_P_caml_extern_sp = sp; }
+  { saved_pc = pc; *--sp = env; *_P_caml_extern_sp = sp; *_P_jit_ctx = jit; }
 #define Restore_after_c_call \
-  { sp = *_P_caml_extern_sp; env = *sp++; saved_pc = NULL; }
+  { *_P_jit_ctx = 0; sp = *_P_caml_extern_sp; env = *sp++; saved_pc = NULL; }
 
 /* An event frame must look like accu + a C_CALL frame + a RETURN 1 frame */
 #define Setup_for_event \
@@ -193,6 +193,12 @@ sp is a local copy of the global variable caml_extern_sp. */
   curr_instr = caml_saved_code[pc - caml_start_code]; \
   goto dispatch_instr
 #endif
+
+#define Set_current_code_fragment \
+  { \
+    code_fragment_under_exec = _F_jit_fragment_find(jit, pc); \
+	  Assert (code_fragment_under_exec != 0); \
+  }
 
 /* Register optimization.
    Some compilers underestimate the use of the local variables representing
@@ -283,6 +289,8 @@ return (
 }
 #endif
 
+/* Communication between caml_interprete and caml_prepare_bytecode */
+struct jit_context *jit_ctx = 0; /* caml_interprete -> caml_prepare_bytecode */
 
 /* The interpreter itself */
 
@@ -330,7 +338,6 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
 
   /* Local pointers to global data, used to force correct addressing in asm */
   void*      *volatile _jumptable     = jumptable;
-  void*      *volatile _tgt_table     = (jit == 0 ? 0 : jit->tgt_table);
 #if defined(THREADED_CODE) && defined(DUMP_JIT_OPCODES)
   const char *volatile _echo_fmt      = "%d %s\n";
 #endif
@@ -356,6 +363,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
   code_t                 *volatile _P_caml_start_code       = &caml_start_code;
   uintnat                *volatile _P_caml_event_count      = &caml_event_count;
   header_t               (*volatile _P_caml_atom_table)[]   = &caml_atom_table;
+  struct jit_context*    *volatile _P_jit_ctx               = &jit_ctx;
 
   /* Pointers to functions, used to force correct addressing in asm */
 #if defined(NATIVE_CODE) && defined(WITH_SPACETIME)
@@ -367,7 +375,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
   void    (*volatile _F_caml_modify)(value*, value)       = caml_modify;
   void    (*volatile _F_caml_debugger)(enum event_kind)   = caml_debugger;
   void    (*volatile _F_caml_stash_backtrace)(value, code_t, value*, int)
-                                                 = caml_stash_backtrace;
+                                                          = caml_stash_backtrace;
   void    (*volatile _F_caml_realloc_stack)(asize_t)      = caml_realloc_stack;
   void    (*volatile _F_caml_process_event)(void)         = caml_process_event;
   void    (*volatile _F_caml_raise_zero_divide)(void)     = caml_raise_zero_divide;
@@ -377,6 +385,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
 #if defined(THREADED_CODE) && defined(DUMP_JIT_OPCODES)
   char*   (*volatile _F_mnemonic)(opcode_t)               = mnemonic;
 #endif
+  struct jit_fragment * (*volatile _F_jit_fragment_find)(struct jit_context*, code_t) = jit_fragment_find;
 
   if (prog == NULL) {           /* Interpreter is initializing */
 #ifdef THREADED_CODE
@@ -391,7 +400,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
     process_signal_entry = &&process_signal;
     process_signal_exit = &&InstructEnd(CHECK_SIGNALS);
     perform_return_entry = &&perform_return;
-    perform_return_exit = &caml_prepare_bytecode;
+    perform_return_exit = &caml_prepare_bytecode; /* TODO improve this */
     trampoline_internal_entry = &&lbl_trampoline_internal;
     trampoline_internal_exit = &&lbl_end_trampoline_internal;
     trampoline_breakout_entry = &&lbl_trampoline_breakout;
@@ -451,8 +460,9 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
   accu = Val_int(0);
 
 #ifdef THREADED_CODE
+  struct jit_fragment *code_fragment_under_exec = (jit == 0 ? 0 : jit->first);
   /* if there is a compiled binary, executes it... */
-  if (_tgt_table != 0) {
+  if (code_fragment_under_exec != 0) {
     goto lbl_trampoline_internal;
   }
   /* ...otherwise goes on */
@@ -725,6 +735,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       ++pc;
       extra_args = *pc - 1;
       pc = Code_val(accu);
+      Set_current_code_fragment;
       env = accu;
     InstructEnd(APPLY):
       Skip;
@@ -740,6 +751,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       sp[2] = env;
       sp[3] = Val_long(extra_args);
       pc = Code_val(accu);
+      Set_current_code_fragment;
       env = accu;
       extra_args = 0;
     InstructEnd(APPLY1):
@@ -758,6 +770,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       sp[3] = env;
       sp[4] = Val_long(extra_args);
       pc = Code_val(accu);
+      Set_current_code_fragment;
       env = accu;
       extra_args = 1;
     InstructEnd(APPLY2):
@@ -778,6 +791,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       sp[4] = env;
       sp[5] = Val_long(extra_args);
       pc = Code_val(accu);
+      Set_current_code_fragment;
       env = accu;
       extra_args = 2;
     InstructEnd(APPLY3):
@@ -797,6 +811,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       for (i = nargs - 1; i >= 0; i--) newsp[i] = sp[i];
       sp = newsp;
       pc = Code_val(accu);
+      Set_current_code_fragment;
       env = accu;
       extra_args += nargs - 1;
     InstructEnd(APPTERM):
@@ -810,6 +825,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       sp = sp + *pc - 1;
       sp[0] = arg1;
       pc = Code_val(accu);
+      Set_current_code_fragment;
       env = accu;
     InstructEnd(APPTERM1):
       Skip;
@@ -824,6 +840,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       sp[0] = arg1;
       sp[1] = arg2;
       pc = Code_val(accu);
+      Set_current_code_fragment;
       env = accu;
       extra_args += 1;
     InstructEnd(APPTERM2):
@@ -841,6 +858,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       sp[1] = arg2;
       sp[2] = arg3;
       pc = Code_val(accu);
+      Set_current_code_fragment;
       env = accu;
       extra_args += 2;
     InstructEnd(APPTERM3):
@@ -861,6 +879,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
         extra_args = Long_val(sp[2]);
         sp += 3;
       }
+      Set_current_code_fragment;
     InstructEnd(RETURN):
       Next;
     }
@@ -891,6 +910,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
         Code_val(accu) = pc - 3; /* Point to the preceding RESTART instr. */
         sp += num_args;
         pc = (code_t)(sp[0]);
+        Set_current_code_fragment;
         env = sp[1];
         extra_args = Long_val(sp[2]);
         sp += 3;
@@ -1399,6 +1419,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       } else {
         sp = *_P_caml_trapsp;
         pc = Trap_pc(sp);
+        Set_current_code_fragment; /* TODO is it necessary? */
         *_P_caml_trapsp = Trap_link(sp);
         env = sp[2];
         extra_args = Long_val(sp[3]);
@@ -1831,12 +1852,13 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
 }
 
 void caml_prepare_bytecode(code_t prog, asize_t prog_size) {
-  /* other implementations of the interpreter (such as an hypothetical
-     JIT translator) might want to do something with a bytecode before
-     running it */
   Assert(prog);
   Assert(prog_size>0);
-  /* actually, the threading of the bytecode might be done here */
+
+  jit_fragment_add(jit_ctx, prog, prog + prog_size);
+#ifdef THREADED_CODE
+  caml_thread_code(prog, prog_size);
+#endif
 }
 
 void caml_release_bytecode(code_t prog, asize_t prog_size) {
@@ -1845,4 +1867,6 @@ void caml_release_bytecode(code_t prog, asize_t prog_size) {
   /* check that we have a program */
   Assert(prog);
   Assert(prog_size>0);
+
+  jit_fragment_remove(jit_ctx, prog, prog + prog_size);
 }

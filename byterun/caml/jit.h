@@ -44,15 +44,32 @@ CAMLextern void *echo_exit;
 CAMLextern long max_template_size;
 
 /* The result of the compilation produced by the jit */
-struct jit_context {
+struct jit_fragment {
 #ifdef DUMP_JIT_OPCODES
-  code_t code;
+  code_t code_copy;
 #endif
+  code_t code_start;
+  code_t code_end;
   void* *tgt_table;
-  void *binary;
+  struct ext_table binary_roots; /* ext_table of struct binary_root* */
+  struct jit_fragment *next;
 };
 
-CAMLextern void jit_compile (code_t code, asize_t code_start, asize_t code_end, struct jit_context *result);
+struct binary_root {
+  void *root;
+  asize_t size;
+};
+
+struct jit_context {
+  struct jit_fragment *first;
+  struct jit_fragment *last;
+};
+
+#define JIT_CONTEXT_INIT() { 0, 0 }
+CAMLextern struct jit_fragment *jit_fragment_add (struct jit_context *ctx, code_t code_start, code_t code_end);
+CAMLextern void jit_fragment_remove (struct jit_context *ctx, code_t code_start, code_t code_end);
+CAMLextern struct jit_fragment *jit_fragment_find (struct jit_context *ctx, code_t pc);
+CAMLextern void jit_compile (struct jit_fragment *fgm, asize_t code_region_start, asize_t code_region_end);
 
 #endif /* THREADED_CODE */
 #endif /* CAML_JIT_H */

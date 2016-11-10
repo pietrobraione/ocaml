@@ -52,8 +52,6 @@ CAMLprim value caml_get_section_table(value unit)
 CAMLprim value caml_reify_bytecode(value prog, value len)
 {
   struct code_fragment * cf = caml_stat_alloc(sizeof(struct code_fragment));
-  value clos;
-
   cf->code_start = (char *) prog;
   cf->code_end = (char *) prog + Long_val(len);
   cf->digest_computed = 0;
@@ -62,10 +60,9 @@ CAMLprim value caml_reify_bytecode(value prog, value len)
 #ifdef ARCH_BIG_ENDIAN
   caml_fixup_endianness((code_t) prog, (asize_t) Long_val(len));
 #endif
-#ifdef THREADED_CODE
-  caml_thread_code((code_t) prog, (asize_t) Long_val(len));
-#endif
   caml_prepare_bytecode((code_t) prog, (asize_t) Long_val(len));
+
+  value clos;
   clos = caml_alloc_small (1, Closure_tag);
   Code_val(clos) = (code_t) prog;
   return clos;

@@ -9,6 +9,7 @@
 
 #define _DEFAULT_SOURCE
 
+#include <string.h>
 #include <sys/mman.h>
 #include "caml/fix_code.h"
 #include "caml/instruct.h"
@@ -86,49 +87,96 @@ int bytecode_size(code_t code, int ofst) {
   }
 }
 
-void jit_compile(code_t code, asize_t code_start, asize_t code_end, struct jit_context *result) {
-  asize_t code_len = code_end - code_start + 1;
+struct jit_fragment *jit_fragment_add(struct jit_context *ctx, code_t code_start, code_t code_end) {
+  struct jit_fragment *fgm = caml_stat_alloc(sizeof(struct jit_fragment));
+  if (ctx->first == 0) {
+    ctx->first = ctx->last = fgm;
+  } else {
+    ctx->last->next = fgm;
+    ctx->last = fgm;
+  }
+
+  asize_t code_len = code_end - code_start;
+#ifdef DUMP_JIT_OPCODES
+  /* stores a copy of the code */
+  fgm->code_copy = caml_stat_alloc(code_len * sizeof(opcode_t));
+  memcpy(fgm->code, code_start, code_len);
+#endif
+  fgm->code_start = code_start;
+  fgm->code_end = code_end;
+  fgm->tgt_table = caml_stat_alloc(code_len * sizeof(void *));
+  int i;
+  for (i = 0; i < code_len; ++i) fgm->tgt_table[i] = 0;
+  caml_ext_table_init(&(fgm->binary_roots), 10);
+  fgm->next = 0;
+
+  return fgm;
+}
+
+void jit_fragment_remove(struct jit_context *ctx, code_t code_start, code_t code_end) {
+  struct jit_fragment *prev, *cur;
+  for (prev = 0, cur = ctx->first; cur != 0; prev = cur, cur = cur->next) {
+    if (cur->code_start == code_start && cur->code_end == code_end) {
+      caml_stat_free(cur->tgt_table);
+      int i;
+      for (i = 0; i < cur->binary_roots.size; ++i) {
+        struct binary_root *r = (struct binary_root *) cur->binary_roots.contents[i];
+
+        munmap(r->root, r->size);
+        caml_stat_free(r);
+      }
+      if (prev == 0) {
+        /* it is the root */
+        ctx->first = ctx->first->next;
+      } else {
+        prev->next = cur->next;
+      }
+      if (ctx->last == cur) {
+        ctx->last = prev;
+      }
+      return;
+    }
+  }
+}
+
+struct jit_fragment *jit_fragment_find(struct jit_context *ctx, code_t pc) {
+  struct jit_fragment *cur;
+  for (cur = ctx->first; cur != 0; cur = cur->next) {
+    if (cur->code_start <= pc && pc < cur->code_end) {
+      return cur;
+    }
+  }
+  return 0;
+}
+#define BinaryCodeBufferSize (code_len * sizeof(unsigned char) * max_template_size)
+
+void jit_compile(struct jit_fragment *fgm, asize_t code_region_start, asize_t code_region_end) {
+  asize_t code_len = code_region_end - code_region_start + 1;
 
   /* allocates memory for the compiled code */
   unsigned char *code_buffer =
-    (unsigned char *) mmap(0, code_len * sizeof(unsigned char) * max_template_size,
+    (unsigned char *) mmap(0, BinaryCodeBufferSize,
          PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
   /*
   if (code_buffer == MAP_FAILED) {
-#ifdef DUMP_JIT_OPCODES
-    result->code = 0;
-#endif
-    result->tgt_table = 0;
     return;
   }
   */
 
-#ifdef DUMP_JIT_OPCODES
-  /* allocates for a copy of the code */
-  result->code = caml_stat_alloc(code_len * sizeof(opcode_t));
-#endif
-
-  /* allocates the tgt_table */
-  result->tgt_table = caml_stat_alloc(code_len * sizeof(void *));
-
   /* dispatches on source code and copies the
    * corresponding blocks in a buffer; at the
-   * same times builds the target table
+   * same times fills the target table
    */
   int compiled_code_size = 0;
+  code_t code = fgm->code_start;
   unsigned char *to = code_buffer;
   unsigned long long ofst;
-  for (ofst = code_start; ofst < code_end; ofst += bytecode_size(code, ofst)) {
+  for (ofst = code_region_start; ofst < code_region_end; ofst += bytecode_size(code, ofst)) {
     opcode_t cur_bytecode = code[ofst];
 
-#ifdef DUMP_JIT_OPCODES
-    /* updates code */
-    result->code[ofst] = cur_bytecode;
-#endif
-
-    /* updates tgt_table */
-    result->tgt_table[ofst] = to;
+    /* updates the target table */
+    fgm->tgt_table[ofst] = to;
 
     /* appends in code_buffer the translation of the bytecode */
 #ifdef DUMP_JIT_OPCODES
@@ -176,8 +224,11 @@ void jit_compile(code_t code, asize_t code_start, asize_t code_end, struct jit_c
   /* makes the buffer executable */
   mprotect(code_buffer, compiled_code_size, PROT_READ | PROT_EXEC);
 
-  /* stores the compiled code */
-  result->binary = code_buffer;
+  /* stores the root of the compiled code buffer */
+  struct binary_root *r = caml_stat_alloc(sizeof (struct binary_root));
+  r->root = code_buffer;
+  r->size = BinaryCodeBufferSize;
+  caml_ext_table_add(&(fgm->binary_roots), r);
 }
 
 #endif /* THREADED_CODE */

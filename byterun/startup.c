@@ -358,9 +358,10 @@ CAMLexport void caml_main(char **argv)
 #ifdef THREADED_CODE
 #if 1
   /* compile before threading */
-  struct jit_context compiled_code;
+  struct jit_context ctx = JIT_CONTEXT_INIT();
+  struct jit_fragment *fgm = jit_fragment_add(&ctx, caml_start_code, caml_start_code + caml_code_size);
   if (!caml_debugger_in_use) {
-    jit_compile(caml_start_code, 0, caml_code_size / sizeof(opcode_t), &compiled_code);
+    jit_compile(fgm, 0, caml_code_size / sizeof(opcode_t));
   }
 #endif
   /* Better to thread now than at the beginning of [caml_interprete],
@@ -397,7 +398,7 @@ CAMLexport void caml_main(char **argv)
   /* Execute the program */
   caml_debugger(PROGRAM_START);
 #if 1
-  res = caml_interprete(caml_start_code, caml_code_size, (caml_debugger_in_use ? 0 : &compiled_code));
+  res = caml_interprete(caml_start_code, caml_code_size, (caml_debugger_in_use ? 0 : &ctx));
 #else
   res = caml_interprete(caml_start_code, caml_code_size, 0);
 #endif
