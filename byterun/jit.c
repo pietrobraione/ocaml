@@ -100,7 +100,7 @@ struct jit_fragment *jit_fragment_add(struct jit_context *ctx, code_t code_start
 #ifdef DUMP_JIT_OPCODES
   /* stores a copy of the code */
   fgm->code_copy = caml_stat_alloc(code_len * sizeof(opcode_t));
-  memcpy(fgm->code, code_start, code_len);
+  memcpy(fgm->code_copy, code_start, code_len);
 #endif
   fgm->code_start = code_start;
   fgm->code_end = code_end;
