@@ -196,8 +196,10 @@ sp is a local copy of the global variable caml_extern_sp. */
 
 #define Set_current_code_fragment \
   { \
-    code_fragment_under_exec = _F_jit_fragment_find(jit, pc); \
-	  Assert (code_fragment_under_exec != 0); \
+    if (jit != 0) { \
+      code_fragment_under_exec = _F_jit_fragment_find(jit, pc); \
+      Assert (code_fragment_under_exec != 0); \
+    } \
   }
 
 /* Register optimization.
@@ -527,7 +529,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
 
 #ifdef DUMP_JIT_OPCODES
     lbl_echo:
-      _F_stderrprintf(_echo_fmt, pc - prog, _F_mnemonic(jit->code[pc - prog]));
+      _F_stderrprintf(_echo_fmt, pc - code_fragment_under_exec->code_start, _F_mnemonic(code_fragment_under_exec->code_copy[pc - code_fragment_under_exec->code_start]));
     lbl_end_echo:
 #endif
 #endif
