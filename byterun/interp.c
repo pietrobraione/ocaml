@@ -388,7 +388,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
   char*   (*volatile _F_mnemonic)(opcode_t)               = mnemonic;
 #endif
   struct jit_fragment * (*volatile _F_jit_fragment_find)(struct jit_context*, code_t) = jit_fragment_find;
-
+  
   if (prog == NULL) {           /* Interpreter is initializing */
 #ifdef THREADED_CODE
     caml_instr_table = (char **) jumptable;
@@ -1857,8 +1857,10 @@ void caml_prepare_bytecode(code_t prog, asize_t prog_size) {
   Assert(prog);
   Assert(prog_size>0);
 
-  jit_fragment_add(jit_ctx, prog, prog + prog_size);
+  asize_t prog_len = prog_size / sizeof(opcode_t);
+  struct jit_fragment *fgm = jit_fragment_add(jit_ctx, prog, prog + prog_len);
 #ifdef THREADED_CODE
+  jit_compile(fgm, 0, prog_len);
   caml_thread_code(prog, prog_size);
 #endif
 }
@@ -1870,5 +1872,5 @@ void caml_release_bytecode(code_t prog, asize_t prog_size) {
   Assert(prog);
   Assert(prog_size>0);
 
-  jit_fragment_remove(jit_ctx, prog, prog + prog_size);
+  jit_fragment_remove(jit_ctx, prog, prog + prog_size / sizeof(opcode_t));
 }

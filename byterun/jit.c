@@ -99,8 +99,9 @@ struct jit_fragment *jit_fragment_add(struct jit_context *ctx, code_t code_start
   asize_t code_len = code_end - code_start;
 #ifdef DUMP_JIT_OPCODES
   /* stores a copy of the code */
-  fgm->code_copy = caml_stat_alloc(code_len * sizeof(opcode_t));
-  memcpy(fgm->code_copy, code_start, code_len);
+  asize_t code_size = code_len * sizeof(opcode_t);
+  fgm->code_copy = caml_stat_alloc(code_size);
+  memcpy(fgm->code_copy, code_start, code_size);
 #endif
   fgm->code_start = code_start;
   fgm->code_end = code_end;
@@ -148,11 +149,9 @@ struct jit_fragment *jit_fragment_find(struct jit_context *ctx, code_t pc) {
   }
   return 0;
 }
-#define BinaryCodeBufferSize (code_len * sizeof(unsigned char) * max_template_size)
+#define BinaryCodeBufferSize ((code_region_end - code_region_start + 1) * sizeof(unsigned char) * max_template_size)
 
 void jit_compile(struct jit_fragment *fgm, asize_t code_region_start, asize_t code_region_end) {
-  asize_t code_len = code_region_end - code_region_start + 1;
-
   /* allocates memory for the compiled code */
   unsigned char *code_buffer =
     (unsigned char *) mmap(0, BinaryCodeBufferSize,

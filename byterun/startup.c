@@ -358,10 +358,11 @@ CAMLexport void caml_main(char **argv)
 #ifdef THREADED_CODE
 #if 1
   /* compile before threading */
+  asize_t caml_code_len = caml_code_size / sizeof(opcode_t);
   struct jit_context ctx = JIT_CONTEXT_INIT();
-  struct jit_fragment *fgm = jit_fragment_add(&ctx, caml_start_code, caml_start_code + caml_code_size);
+  struct jit_fragment *fgm = jit_fragment_add(&ctx, caml_start_code, caml_start_code + caml_code_len);
   if (!caml_debugger_in_use) {
-    jit_compile(fgm, 0, caml_code_size / sizeof(opcode_t));
+    jit_compile(fgm, 0, caml_code_len);
   }
 #endif
   /* Better to thread now than at the beginning of [caml_interprete],
@@ -464,10 +465,7 @@ CAMLexport void caml_startup_code(
     for (i = 0; i < len; i++) caml_saved_code[i] = caml_start_code[i];
   }
 #ifdef THREADED_CODE
-#if 0
-  struct jit_context compiled_code;
-  jit_compile(caml_start_code, 0, caml_code_size / sizeof(opcode_t), &compiled_code);
-#endif
+  /* TODO jit */
   caml_thread_code(caml_start_code, code_size);
 #endif
   /* Use the builtin table of primitives */
