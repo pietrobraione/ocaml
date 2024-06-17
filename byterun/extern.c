@@ -37,6 +37,8 @@ static uintnat obj_counter;  /* Number of objects emitted so far */
 static uintnat size_32;  /* Size in words of 32-bit block for struct. */
 static uintnat size_64;  /* Size in words of 64-bit block for struct. */
 
+struct ext_table caml_code_fragments_table;
+
 /* Flags affecting marshaling */
 
 enum {

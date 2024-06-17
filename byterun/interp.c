@@ -87,8 +87,13 @@ extern uintnat caml_spacetime_my_profinfo(struct ext_table**, uintnat);
   (result) = Val_hp (*_P_caml_young_ptr);                                       \
   DEBUG_clear ((result), (wosize));                                         \
 }while(0)
-/* declared in prims.h */
-#define _F_Primitive(n) ((c_primitive)(_P_caml_prim_table->contents[n]))
+/* declared in caml/prims.h */
+#define _F_Primitive1(n) ((value (*)(value))(_P_caml_prim_table->contents[n]))
+#define _F_Primitive2(n) ((value (*)(value,value))(_P_caml_prim_table->contents[n]))
+#define _F_Primitive3(n) ((value (*)(value,value,value))(_P_caml_prim_table->contents[n]))
+#define _F_Primitive4(n) ((value (*)(value,value,value,value))(_P_caml_prim_table->contents[n]))
+#define _F_Primitive5(n) ((value (*)(value,value,value,value,value))(_P_caml_prim_table->contents[n]))
+#define _F_PrimitiveN(n) ((value (*)(value*,int))(_P_caml_prim_table->contents[n]))
 /* declared in mlvalues.h */
 #define _F_Atom(tag) (Val_hp (&((*_P_caml_atom_table) [(tag)])))
 
@@ -125,10 +130,17 @@ sp is a local copy of the global variable caml_extern_sp. */
 #  else
 #    define InterpNext goto *(void *)(jumptbl_base + *pc)
 #  endif
-#  define JitNext       __asm__ __volatile__ ("jmp *%0" : : "r" (code_fragment_under_exec->tgt_table[pc - code_fragment_under_exec->code_start]), "r" (code_fragment_under_exec), "r" (pc))
-#  define BreakoutNext  __asm__ __volatile__ ("jmp *%0" : : "r" (jumptbl_base + *pc), "r" (jumptbl_base), "r" (pc))
+#  if defined(__aarch64__)
+#    define JitNext       __asm__ __volatile__ ("mov x23, %0 \nbr x23\n" : : "r" (code_fragment_under_exec->tgt_table[pc - code_fragment_under_exec->code_start]), "r" (code_fragment_under_exec), "r" (pc) : "x23")
+#    define BreakoutNext  __asm__ __volatile__ ("mov x23, %0 \nbr x23\n" : : "r" (jumptbl_base + *pc), "r" (jumptbl_base), "r" (pc) : "x23")
 /* TODO BreakoutNext in case DEBUG is defined */
-#  define DebugNext     __asm__ __volatile__ ("jmp *%0" : : "r" (_jumptable[(*_P_caml_saved_code)[pc - *_P_caml_start_code]]), "r" (_jumptable), "r" (_P_caml_saved_code), "r" (pc), "r" (_P_caml_start_code))
+#    define DebugNext     __asm__ __volatile__ ("mov x23, %0 \nbr x23\n" : : "r" (_jumptable[(*_P_caml_saved_code)[pc - *_P_caml_start_code]]), "r" (_jumptable), "r" (_P_caml_saved_code), "r" (pc), "r" (_P_caml_start_code) : "x23")
+#  elif defined(__i386__) || defined(__x86_64__)
+#    define JitNext       __asm__ __volatile__ ("jmp *%0" : : "r" (code_fragment_under_exec->tgt_table[pc - code_fragment_under_exec->code_start]), "r" (code_fragment_under_exec), "r" (pc))
+#    define BreakoutNext  __asm__ __volatile__ ("jmp *%0" : : "r" (jumptbl_base + *pc), "r" (jumptbl_base), "r" (pc))
+/* TODO BreakoutNext in case DEBUG is defined */
+#    define DebugNext     __asm__ __volatile__ ("jmp *%0" : : "r" (_jumptable[(*_P_caml_saved_code)[pc - *_P_caml_start_code]]), "r" (_jumptable), "r" (_P_caml_saved_code), "r" (pc), "r" (_P_caml_start_code))
+#  endif
 #  define Next \
   {							\
     if (code_fragment_under_exec != 0 && code_fragment_under_exec->tgt_table[pc - code_fragment_under_exec->code_start] != 0)	\
@@ -294,6 +306,9 @@ return (
 /* Communication between caml_interprete and caml_prepare_bytecode */
 struct jit_context *jit_ctx = 0; /* caml_interprete -> caml_prepare_bytecode */
 
+struct longjmp_buffer raise_buf; /* HACK!!!!! Bring the buffer declaration outside the function */
+
+
 /* The interpreter itself */
 
 value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
@@ -322,7 +337,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
      will keep correct value across longjmp */
   struct caml__roots_block * volatile initial_local_roots;
   volatile code_t saved_pc = NULL;
-  struct longjmp_buffer raise_buf;
+  /*struct longjmp_buffer raise_buf; HACK!!!!! Bring the buffer declaration outside the function */
   int raise_shall_return;
 #ifndef THREADED_CODE
   opcode_t curr_instr;
@@ -1466,7 +1481,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
     Instruct(C_CALL1):
       ++pc;
       Setup_for_c_call;
-      accu = _F_Primitive(*pc)(accu);
+      accu = _F_Primitive1(*pc)(accu);
       Restore_after_c_call;
       pc++;
     InstructEnd(C_CALL1):
@@ -1475,7 +1490,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
     Instruct(C_CALL2):
       ++pc;
       Setup_for_c_call;
-      accu = _F_Primitive(*pc)(accu, sp[1]);
+      accu = _F_Primitive2(*pc)(accu, sp[1]);
       Restore_after_c_call;
       sp += 1;
       pc++;
@@ -1485,7 +1500,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
     Instruct(C_CALL3):
       ++pc;
       Setup_for_c_call;
-      accu = _F_Primitive(*pc)(accu, sp[1], sp[2]);
+      accu = _F_Primitive3(*pc)(accu, sp[1], sp[2]);
       Restore_after_c_call;
       sp += 2;
       pc++;
@@ -1495,7 +1510,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
     Instruct(C_CALL4):
       ++pc;
       Setup_for_c_call;
-      accu = _F_Primitive(*pc)(accu, sp[1], sp[2], sp[3]);
+      accu = _F_Primitive4(*pc)(accu, sp[1], sp[2], sp[3]);
       Restore_after_c_call;
       sp += 3;
       pc++;
@@ -1505,7 +1520,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
     Instruct(C_CALL5):
       ++pc;
       Setup_for_c_call;
-      accu = _F_Primitive(*pc)(accu, sp[1], sp[2], sp[3], sp[4]);
+      accu = _F_Primitive5(*pc)(accu, sp[1], sp[2], sp[3], sp[4]);
       Restore_after_c_call;
       sp += 4;
       pc++;
@@ -1517,7 +1532,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       int nargs = *pc++;
       *--sp = accu;
       Setup_for_c_call;
-      accu = _F_Primitive(*pc)(sp + 1, nargs);
+      accu = _F_PrimitiveN(*pc)(sp + 1, nargs);
       Restore_after_c_call;
       sp += nargs;
       pc++;

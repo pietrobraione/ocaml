@@ -1446,10 +1446,12 @@ if test $nargs != "none"; then
   echo "#define HAS_GETHOSTBYADDR_R $nargs" >> s.h
 fi
 
-if sh ./hasgot mkstemp; then
+
+#HACK!!!!!
+#if sh ./hasgot mkstemp; then
   inf "mkstemp() found"
   echo "#define HAS_MKSTEMP" >> s.h
-fi
+#fi
 
 if sh ./hasgot nice; then
   inf "nice() found"
