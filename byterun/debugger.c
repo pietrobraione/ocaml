@@ -191,7 +191,8 @@ void caml_debugger_init(void)
     sock_domain = PF_UNIX;
     sock_addr.s_unix.sun_family = AF_UNIX;
     strncpy(sock_addr.s_unix.sun_path, address,
-            sizeof(sock_addr.s_unix.sun_path));
+            sizeof(sock_addr.s_unix.sun_path) - 1);
+    sock_addr.s_unix.sun_path[sizeof(sock_addr.s_unix.sun_path) - 1] = '\0';
     sock_addr_len =
       ((char *)&(sock_addr.s_unix.sun_path) - (char *)&(sock_addr.s_unix))
         + strlen(address);
