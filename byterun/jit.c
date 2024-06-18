@@ -21,12 +21,6 @@
 /* Pointers to code templates */
 void * *codetmpl_entry = 0;
 void * *codetmpl_exit = 0;
-void *check_stacks_entry = 0;
-void *check_stacks_exit = 0;
-void *process_signal_entry = 0;
-void *process_signal_exit = 0;
-void *perform_return_entry = 0;
-void *perform_return_exit = 0;
 void *trampoline_internal_entry = 0;
 void *trampoline_internal_exit = 0;
 void *trampoline_breakout_entry = 0;
@@ -54,11 +48,6 @@ long max_template_size;
    ((opcode) == BEQ)         || ((opcode) == BNEQ)     || ((opcode) == BLTINT)   || \
    ((opcode) == BLEINT)      || ((opcode) == BGTINT)   || ((opcode) == BGEINT)   || \
    ((opcode) == BULTINT)     || ((opcode) == BUGEINT))
-
-#define MustCheckStack(opcode) \
-  (((opcode) == APPLY)       || ((opcode) == APPLY1)   || ((opcode) == APPLY2)        || \
-   ((opcode) == APPLY3)      || ((opcode) == APPTERM)  || ((opcode) == APPTERM1)      || \
-   ((opcode) == APPTERM2)    || ((opcode) == APPTERM3))
 
 #define CopyCode(entry, exit) \
     { \
@@ -183,21 +172,14 @@ void jit_compile(struct jit_fragment *fgm, asize_t code_region_start, asize_t co
 #endif
     CopyCode(codetmpl_entry[cur_bytecode], codetmpl_exit[cur_bytecode]);
 
-    /* possibly appends the check stacks code */
-    if (MustCheckStack(cur_bytecode)) {
-      CopyCode(check_stacks_entry, check_stacks_exit);
-    }
-
     /* handles POPTRAP */
     if (cur_bytecode == POPTRAP) {
       CopyCode(POPTRAP_trampoline_entry, POPTRAP_trampoline_exit);
-      CopyCode(process_signal_entry, process_signal_exit);
     }
 
     /* handles RAISE_NOTRACE, RERAISE, RAISE */
     if (cur_bytecode == RAISE_NOTRACE || cur_bytecode == RERAISE || cur_bytecode == RAISE) {
       CopyCode(RAISE_trampoline_entry, RAISE_trampoline_exit);
-      CopyCode(perform_return_entry, perform_return_exit);
     }
 
     /* handles EVENT and BREAK */

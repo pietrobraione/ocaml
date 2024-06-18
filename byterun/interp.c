@@ -51,13 +51,6 @@ int stderrprintf(const char *fmt, ...) {
 }
 #endif
 
-#ifdef THREADED_CODE
-void skip(void) { }
-#define Skip skip()
-#else
-#define Skip
-#endif
-
 /* Redefinition of macros */
 /* Declared in memory.h */
 #if defined(NATIVE_CODE) && defined(WITH_SPACETIME)
@@ -214,6 +207,66 @@ sp is a local copy of the global variable caml_extern_sp. */
     } \
   }
 
+/* This is to eliminate gotos and (hopefully) have better jit templates */
+#define Process_signal \
+  { \
+    *_P_caml_something_to_do = 0; \
+    Setup_for_event; \
+    _F_caml_process_event(); \
+    Restore_after_event; \
+  } 
+
+#define Perform_check_signal \
+  { \
+      if (*_P_caml_something_to_do) { \
+        Process_signal; \
+      } \
+  }
+
+#define Check_stacks \
+  { \
+    if (sp < *_P_caml_stack_threshold) { \
+      *_P_caml_extern_sp = sp; \
+      _F_caml_realloc_stack(Stack_threshold / sizeof(value)); \
+      sp = *_P_caml_extern_sp; \
+    } \
+    Perform_check_signal; \
+  }
+
+#define Raise_notrace \
+  { \
+    raise_shall_return = ((char *) *_P_caml_trapsp \
+        >= (char *) *_P_caml_stack_high - initial_sp_offset); \
+    if (raise_shall_return) { \
+      *_P_caml_external_raise = initial_external_raise; \
+      *_P_caml_extern_sp = (value *) ((char *) *_P_caml_stack_high \
+                                  - initial_sp_offset); \
+      (*_P_caml_callback_depth)--; \
+      accu = Make_exception_result(accu); \
+    } else { \
+      sp = *_P_caml_trapsp; \
+      pc = Trap_pc(sp); \
+      Set_current_code_fragment; /* TODO is it necessary? */ \
+      *_P_caml_trapsp = Trap_link(sp); \
+      env = sp[2]; \
+      extra_args = Long_val(sp[3]); \
+      sp += 4; \
+    } \
+  }
+
+#define Perform_getdynmet \
+  { \
+      /* accu == tag, sp[0] == object, *pc == cache */ \
+      value meths = Field (sp[0], 0); \
+      int li = 3, hi = Field(meths,0), mi; \
+      while (li < hi) { \
+        mi = ((li+hi) >> 1) | 1; \
+        if (accu < Field(meths,mi)) hi = mi-2; \
+        else li = mi; \
+      } \
+      accu = Field (meths, li-1); \
+   }
+
 /* Register optimization.
    Some compilers underestimate the use of the local variables representing
    the abstract machine registers, and don't put them in hardware registers,
@@ -295,13 +348,13 @@ sp is a local copy of the global variable caml_extern_sp. */
 static intnat caml_bcodcount;
 #endif
 
-#if defined(THREADED_CODE) && defined(DUMP_JIT_OPCODES)
+/*if defined(THREADED_CODE) && defined(DUMP_JIT_OPCODES)*/
 char *mnemonic(opcode_t x) {
 return (
 #   include "caml/mnem.h"
     "INVALID_BYTECODE" );
 }
-#endif
+/*endif*/
 
 /* Communication between caml_interprete and caml_prepare_bytecode */
 struct jit_context *jit_ctx = 0; /* caml_interprete -> caml_prepare_bytecode */
@@ -412,12 +465,6 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
     /* initializes the jit by setting pointers to code templates */
     codetmpl_entry = jumptable;
     codetmpl_exit = _codetmpl_exit;
-    check_stacks_entry = &&check_stacks;
-    check_stacks_exit = &&InstructEnd(CHECK_SIGNALS);
-    process_signal_entry = &&process_signal;
-    process_signal_exit = &&InstructEnd(CHECK_SIGNALS);
-    perform_return_entry = &&perform_return;
-    perform_return_exit = &caml_prepare_bytecode; /* TODO improve this */
     trampoline_internal_entry = &&lbl_trampoline_internal;
     trampoline_internal_exit = &&lbl_end_trampoline_internal;
     trampoline_breakout_entry = &&lbl_trampoline_breakout;
@@ -440,6 +487,13 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
     max_template_size = 0;
     for (int i = 0; i < FIRST_UNIMPLEMENTED_OP; ++i) {
       long binary_block_size = codetmpl_exit[i] - codetmpl_entry[i];
+#if 0
+      if (binary_block_size < 0) {
+	printf("ERROR: bytecode %d (%s) wrong template\n", i, mnemonic(i));
+      } else {
+	printf("Bytecode %d (%s) template size %ld\n", i, mnemonic(i), binary_block_size);
+	}
+#endif
       if (binary_block_size > max_template_size) {
         max_template_size = binary_block_size;
       }
@@ -526,15 +580,19 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
     lbl_end_trampoline_breakout:
 
     lbl_POPTRAP_trampoline:
-      if (!*_P_caml_something_to_do) {
+      if (*_P_caml_something_to_do) {
+        Process_signal;
+      } else {
         InternalNext;
-      } /* else, fall through */
+      }
     lbl_end_POPTRAP_trampoline:
 
     lbl_RAISE_trampoline:
-      if (!raise_shall_return) {
+      if (raise_shall_return) {
+	return accu;
+      } else {
         InternalNext;
-      } /* else, fall through */
+      }
     lbl_end_RAISE_trampoline:
 
     lbl_dbg_trampoline:
@@ -598,10 +656,22 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
     InstructEnd(ACC7):
       Next;
 
-    Instruct(PUSH): Instruct(PUSHACC0):
+    Instruct(ACC):
+      ++pc;
+      accu = sp[*pc++];
+    InstructEnd(ACC):
+      Next;
+
+    Instruct(PUSH):
       ++pc;
       *--sp = accu;
-    InstructEnd(PUSH): InstructEnd(PUSHACC0):
+    InstructEnd(PUSH):
+      Next;
+
+    Instruct(PUSHACC0):
+      ++pc;
+      *--sp = accu;
+    InstructEnd(PUSHACC0):
       Next;
 
     Instruct(PUSHACC1):
@@ -653,12 +723,6 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
     InstructEnd(PUSHACC):
       Next;
 
-    Instruct(ACC):
-      ++pc;
-      accu = sp[*pc++];
-    InstructEnd(ACC):
-      Next;
-
     Instruct(POP):
       ++pc;
       sp += *pc++;
@@ -698,6 +762,12 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
     InstructEnd(ENVACC4):
       Next;
 
+    Instruct(ENVACC):
+      ++pc;
+      accu = Field(env, *pc++);
+    InstructEnd(ENVACC):
+      Next;
+
     Instruct(PUSHENVACC1):
       ++pc;
       *--sp = accu; accu = Field(env, 1);
@@ -729,12 +799,6 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
     InstructEnd(PUSHENVACC):
       Next;
 
-    Instruct(ENVACC):
-      ++pc;
-      accu = Field(env, *pc++);
-    InstructEnd(ENVACC):
-      Next;
-
 /* Function application */
 
     Instruct(PUSH_RETADDR): {
@@ -754,9 +818,9 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       pc = Code_val(accu);
       Set_current_code_fragment;
       env = accu;
+      Check_stacks;
     InstructEnd(APPLY):
-      Skip;
-      goto check_stacks;
+      Next;
     }
 
     Instruct(APPLY1): {
@@ -771,9 +835,9 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       Set_current_code_fragment;
       env = accu;
       extra_args = 0;
+      Check_stacks;
     InstructEnd(APPLY1):
-      Skip;
-      goto check_stacks;
+      Next;
     }
 
     Instruct(APPLY2): {
@@ -790,9 +854,9 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       Set_current_code_fragment;
       env = accu;
       extra_args = 1;
+      Check_stacks;
     InstructEnd(APPLY2):
-      Skip;
-      goto check_stacks;
+      Next;
     }
 
     Instruct(APPLY3): {
@@ -811,9 +875,9 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       Set_current_code_fragment;
       env = accu;
       extra_args = 2;
+      Check_stacks;
     InstructEnd(APPLY3):
-      Skip;
-      goto check_stacks;
+      Next;
     }
 
     Instruct(APPTERM): {
@@ -831,9 +895,9 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       Set_current_code_fragment;
       env = accu;
       extra_args += nargs - 1;
+      Check_stacks;
     InstructEnd(APPTERM):
-      Skip;
-      goto check_stacks;
+      Next;
     }
 
     Instruct(APPTERM1): {
@@ -844,9 +908,9 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       pc = Code_val(accu);
       Set_current_code_fragment;
       env = accu;
+      Check_stacks;
     InstructEnd(APPTERM1):
-      Skip;
-      goto check_stacks;
+      Next;
     }
 
     Instruct(APPTERM2): {
@@ -860,9 +924,9 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       Set_current_code_fragment;
       env = accu;
       extra_args += 1;
+      Check_stacks;
     InstructEnd(APPTERM2):
-      Skip;
-      goto check_stacks;
+      Next;
     }
 
     Instruct(APPTERM3): {
@@ -878,9 +942,9 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       Set_current_code_fragment;
       env = accu;
       extra_args += 2;
+      Check_stacks;
     InstructEnd(APPTERM3):
-      Skip;
-      goto check_stacks;
+      Next;
     }
 
     Instruct(RETURN): {
@@ -1000,11 +1064,22 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       Next;
     }
 
-    Instruct(PUSHOFFSETCLOSURE):
+    Instruct(OFFSETCLOSUREM2):
       ++pc;
-      *--sp = accu;
-      accu = env + *pc++ * sizeof(value);
-    InstructEnd(PUSHOFFSETCLOSURE):
+      accu = env - 2 * sizeof(value);
+    InstructEnd(OFFSETCLOSUREM2):
+      Next;
+
+    Instruct(OFFSETCLOSURE0):
+      ++pc;
+      accu = env;
+    InstructEnd(OFFSETCLOSURE0):
+      Next;
+
+    Instruct(OFFSETCLOSURE2):
+      ++pc;
+      accu = env + 2 * sizeof(value);
+    InstructEnd(OFFSETCLOSURE2):
       Next;
 
     Instruct(OFFSETCLOSURE):
@@ -1020,23 +1095,11 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
     InstructEnd(PUSHOFFSETCLOSUREM2):
       Next;
 
-    Instruct(OFFSETCLOSUREM2):
-      ++pc;
-      accu = env - 2 * sizeof(value);
-    InstructEnd(OFFSETCLOSUREM2):
-      Next;
-
     Instruct(PUSHOFFSETCLOSURE0):
       ++pc;
       *--sp = accu;
       accu = env;
     InstructEnd(PUSHOFFSETCLOSURE0):
-      Next;
-
-    Instruct(OFFSETCLOSURE0):
-      ++pc;
-      accu = env;
-    InstructEnd(OFFSETCLOSURE0):
       Next;
 
     Instruct(PUSHOFFSETCLOSURE2):
@@ -1046,22 +1109,15 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
     InstructEnd(PUSHOFFSETCLOSURE2):
       Next;
 
-    Instruct(OFFSETCLOSURE2):
+    Instruct(PUSHOFFSETCLOSURE):
       ++pc;
-      accu = env + 2 * sizeof(value);
-    InstructEnd(OFFSETCLOSURE2):
+      *--sp = accu;
+      accu = env + *pc++ * sizeof(value);
+    InstructEnd(PUSHOFFSETCLOSURE):
       Next;
 
 
 /* Access to global variables */
-
-    Instruct(PUSHGETGLOBAL):
-      ++pc;
-      *--sp = accu;
-      accu = Field(*_P_caml_global_data, *pc);
-      pc++;
-    InstructEnd(PUSHGETGLOBAL):
-      Next;
 
     Instruct(GETGLOBAL):
       ++pc;
@@ -1070,14 +1126,12 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
     InstructEnd(GETGLOBAL):
       Next;
 
-    Instruct(PUSHGETGLOBALFIELD):
+    Instruct(PUSHGETGLOBAL):
       ++pc;
       *--sp = accu;
       accu = Field(*_P_caml_global_data, *pc);
       pc++;
-      accu = Field(accu, *pc);
-      pc++;
-    InstructEnd(PUSHGETGLOBALFIELD):
+    InstructEnd(PUSHGETGLOBAL):
       Next;
 
     Instruct(GETGLOBALFIELD): {
@@ -1090,6 +1144,16 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       Next;
     }
 
+    Instruct(PUSHGETGLOBALFIELD):
+      ++pc;
+      *--sp = accu;
+      accu = Field(*_P_caml_global_data, *pc);
+      pc++;
+      accu = Field(accu, *pc);
+      pc++;
+    InstructEnd(PUSHGETGLOBALFIELD):
+      Next;
+
     Instruct(SETGLOBAL):
       ++pc;
       _F_caml_modify(&Field(*_P_caml_global_data, *pc), accu);
@@ -1100,6 +1164,18 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
 
 /* Allocation of blocks */
 
+    Instruct(ATOM0):
+      ++pc;
+      accu = _F_Atom(0);
+    InstructEnd(ATOM0):
+      Next;
+
+    Instruct(ATOM):
+      ++pc;
+      accu = _F_Atom(*pc++);
+    InstructEnd(ATOM):
+      Next;
+
     Instruct(PUSHATOM0):
       ++pc;
       *--sp = accu;
@@ -1107,23 +1183,11 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
     InstructEnd(PUSHATOM0):
       Next;
 
-    Instruct(ATOM0):
-      ++pc;
-      accu = _F_Atom(0);
-    InstructEnd(ATOM0):
-      Next;
-
     Instruct(PUSHATOM):
       ++pc;
       *--sp = accu;
       accu = _F_Atom(*pc++);
     InstructEnd(PUSHATOM):
-      Next;
-
-    Instruct(ATOM):
-      ++pc;
-      accu = _F_Atom(*pc++);
-    InstructEnd(ATOM):
       Next;
 
     Instruct(MAKEBLOCK): {
@@ -1400,50 +1464,18 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       } else {
         *_P_caml_trapsp = Trap_link(sp);
         sp += 4;
-      }
+      }      
     InstructEnd(POPTRAP):
       if (caml_something_to_do) {
-        goto process_signal;
-      } else {
-        Next;
-      }
-
-    Instruct(RAISE_NOTRACE):
-      ++pc;
-      if (*_P_caml_trapsp >= *_P_caml_trap_barrier) _F_caml_debugger(TRAP_BARRIER);
-      goto raise_notrace;
-
-    Instruct(RERAISE):
-      ++pc;
-      if (*_P_caml_trapsp >= *_P_caml_trap_barrier) _F_caml_debugger(TRAP_BARRIER);
-      if (*_P_caml_backtrace_active) _F_caml_stash_backtrace(accu, pc, sp, 1);
-      goto raise_notrace;
+        Process_signal;
+      } 
+      Next;
 
     Instruct(RAISE):
       ++pc;
-    raise_exception:
       if (*_P_caml_trapsp >= *_P_caml_trap_barrier) _F_caml_debugger(TRAP_BARRIER);
       if (*_P_caml_backtrace_active) _F_caml_stash_backtrace(accu, pc, sp, 0);
-    raise_notrace:
-      raise_shall_return = ((char *) *_P_caml_trapsp
-          >= (char *) *_P_caml_stack_high - initial_sp_offset);
-      if (raise_shall_return) {
-        *_P_caml_external_raise = initial_external_raise;
-        *_P_caml_extern_sp = (value *) ((char *) *_P_caml_stack_high
-                                    - initial_sp_offset);
-        (*_P_caml_callback_depth)--;
-        accu = Make_exception_result(accu);
-      } else {
-        sp = *_P_caml_trapsp;
-        pc = Trap_pc(sp);
-        Set_current_code_fragment; /* TODO is it necessary? */
-        *_P_caml_trapsp = Trap_link(sp);
-        env = sp[2];
-        extra_args = Long_val(sp[3]);
-        sp += 4;
-      }
-    InstructEnd(RAISE_NOTRACE):
-    InstructEnd(RERAISE):
+      Raise_notrace;
     InstructEnd(RAISE):
       if (raise_shall_return) {
         goto perform_return;
@@ -1451,28 +1483,44 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
         Next;
       }
 
-/* Stack checks */
-
-    check_stacks:
-      if (sp < *_P_caml_stack_threshold) {
-        *_P_caml_extern_sp = sp;
-        _F_caml_realloc_stack(Stack_threshold / sizeof(value));
-        sp = *_P_caml_extern_sp;
+    Instruct(RERAISE):
+      ++pc;
+      if (*_P_caml_trapsp >= *_P_caml_trap_barrier) _F_caml_debugger(TRAP_BARRIER);
+      if (*_P_caml_backtrace_active) _F_caml_stash_backtrace(accu, pc, sp, 1);
+      Raise_notrace;
+    InstructEnd(RERAISE):
+      if (raise_shall_return) {
+        goto perform_return;
+      } else {
+        Next;
       }
-      goto perform_check_signal;
+
+    Instruct(RAISE_NOTRACE):
+      ++pc;
+      if (*_P_caml_trapsp >= *_P_caml_trap_barrier) _F_caml_debugger(TRAP_BARRIER);
+      Raise_notrace;
+    InstructEnd(RAISE_NOTRACE):
+      if (raise_shall_return) {
+        goto perform_return;
+      } else {
+        Next;
+      }
+
+    raise_exception:
+      if (*_P_caml_trapsp >= *_P_caml_trap_barrier) _F_caml_debugger(TRAP_BARRIER);
+      if (*_P_caml_backtrace_active) _F_caml_stash_backtrace(accu, pc, sp, 0);
+      Raise_notrace;
+      if (raise_shall_return) {
+        goto perform_return;
+      } else {
+        Next;
+      }
 
 /* Signal handling */
 
     Instruct(CHECK_SIGNALS):    /* accu not preserved */
       ++pc;
-    perform_check_signal:
-      if (*_P_caml_something_to_do) {
-    process_signal:
-          *_P_caml_something_to_do = 0;
-          Setup_for_event;
-          _F_caml_process_event();
-          Restore_after_event;
-      }
+      Perform_check_signal;
     InstructEnd(CHECK_SIGNALS):
       Next;
 
@@ -1566,6 +1614,13 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
     InstructEnd(CONST3):
       Next;
 
+    Instruct(CONSTINT):
+      ++pc;
+      accu = Val_int(*pc);
+      pc++;
+    InstructEnd(CONSTINT):
+      Next;
+
     Instruct(PUSHCONST0):
       ++pc;
       *--sp = accu; accu = Val_int(0);
@@ -1596,13 +1651,6 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       accu = Val_int(*pc);
       pc++;
     InstructEnd(PUSHCONSTINT):
-      Next;
-
-    Instruct(CONSTINT):
-      ++pc;
-      accu = Val_int(*pc);
-      pc++;
-    InstructEnd(CONSTINT):
       Next;
 
 /* Integer arithmetic */
@@ -1757,8 +1805,8 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       Next;
 
 #define CAML_METHOD_CACHE
+    Instruct(GETPUBMET):
 #ifdef CAML_METHOD_CACHE
-    Instruct(GETPUBMET): {
       ++pc;
       /* accu == object, pc[0] == tag, pc[1] == cache */
       value meths = Field (accu, 0);
@@ -1792,39 +1840,21 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
         accu = Field (meths, li-1);
       }
       pc++;
-    InstructEnd(GETPUBMET):
-      Next;
-    }
 #else
-    Instruct(GETPUBMET):
       ++pc;
       *--sp = accu;
       accu = Val_int(*pc);
       pc += 2;
-      goto perform_getdynmet;
+      Perform_getdynmet;
 #endif
+    InstructEnd(GETPUBMET):
+      Next;
+      
     Instruct(GETDYNMET):
       ++pc;
-#ifndef CAML_METHOD_CACHE
-    perform_getdynmet: {
-#else
-    {
-#endif
-      /* accu == tag, sp[0] == object, *pc == cache */
-      value meths = Field (sp[0], 0);
-      int li = 3, hi = Field(meths,0), mi;
-      while (li < hi) {
-        mi = ((li+hi) >> 1) | 1;
-        if (accu < Field(meths,mi)) hi = mi-2;
-        else li = mi;
-      }
-      accu = Field (meths, li-1);
+      Perform_getdynmet;
     InstructEnd(GETDYNMET):
-#ifndef CAML_METHOD_CACHE
-    InstructEnd(GETPUBMET):
-#endif
       Next;
-    }
 
 /* Debugging and machine control */
 

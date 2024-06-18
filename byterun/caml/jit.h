@@ -19,12 +19,6 @@
  */
 CAMLextern void * *codetmpl_entry;
 CAMLextern void * *codetmpl_exit;
-CAMLextern void *check_stacks_entry;
-CAMLextern void *check_stacks_exit;
-CAMLextern void *process_signal_entry;
-CAMLextern void *process_signal_exit;
-CAMLextern void *perform_return_entry;
-CAMLextern void *perform_return_exit;
 CAMLextern void *trampoline_internal_entry;
 CAMLextern void *trampoline_internal_exit;
 CAMLextern void *trampoline_breakout_entry;
@@ -35,8 +29,10 @@ CAMLextern void *RAISE_trampoline_entry;
 CAMLextern void *RAISE_trampoline_exit;
 CAMLextern void *dbg_trampoline_entry;
 CAMLextern void *dbg_trampoline_exit;
+#ifdef DUMP_JIT_OPCODES
 CAMLextern void *echo_entry;
 CAMLextern void *echo_exit;
+#endif
 
 /* The maximum size of a code template; also initialized
  * by caml_interprete
