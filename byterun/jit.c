@@ -31,10 +31,8 @@ void *RAISE_trampoline_entry = 0;
 void *RAISE_trampoline_exit = 0;
 void *dbg_trampoline_entry = 0;
 void *dbg_trampoline_exit = 0;
-#ifdef DUMP_JIT_OPCODES
 void *echo_entry = 0;
 void *echo_exit = 0;
-#endif
 
 /* The maximum size of a code template */
 long max_template_size;

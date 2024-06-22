@@ -29,10 +29,8 @@ CAMLextern void *RAISE_trampoline_entry;
 CAMLextern void *RAISE_trampoline_exit;
 CAMLextern void *dbg_trampoline_entry;
 CAMLextern void *dbg_trampoline_exit;
-#ifdef DUMP_JIT_OPCODES
 CAMLextern void *echo_entry;
 CAMLextern void *echo_exit;
-#endif
 
 /* The maximum size of a code template; also initialized
  * by caml_interprete
