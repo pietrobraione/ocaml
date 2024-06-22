@@ -400,7 +400,7 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
   static void * jumptable[] = {
 #    include "caml/jumptbl.h"
   };
-#define STOP_TEMPLATE_SIZE 100
+#define STOP_TEMPLATE_SIZE 150
   static void * _codetmpl_exit[] = {
 #    include "caml/codetmpl_exit.h"
   };
