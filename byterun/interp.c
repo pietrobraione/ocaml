@@ -348,13 +348,13 @@ sp is a local copy of the global variable caml_extern_sp. */
 static intnat caml_bcodcount;
 #endif
 
-/*if defined(THREADED_CODE) && defined(DUMP_JIT_OPCODES)*/
+#if defined(THREADED_CODE) && defined(DUMP_JIT_OPCODES)
 char *mnemonic(opcode_t x) {
 return (
 #   include "caml/mnem.h"
     "INVALID_BYTECODE" );
 }
-/*endif*/
+#endif
 
 /* Communication between caml_interprete and caml_prepare_bytecode */
 struct jit_context *jit_ctx = 0; /* caml_interprete -> caml_prepare_bytecode */
@@ -602,7 +602,17 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
 
 #ifdef DUMP_JIT_OPCODES
     lbl_echo:
+      sp -= 3;
+      sp[0] = accu;
+      sp[1] = (value) pc;
+      sp[2] = (value) jumptbl_base;
+      *_P_caml_extern_sp = sp;
       _F_stderrprintf(_echo_fmt, pc - code_fragment_under_exec->code_start, _F_mnemonic(code_fragment_under_exec->code_copy[pc - code_fragment_under_exec->code_start]));
+      sp = *_P_caml_extern_sp;
+      jumptbl_base = (char *) sp[2];
+      pc = (code_t) sp[1];
+      accu = sp[0];
+      sp += 3;
     lbl_end_echo:
 #endif
 #endif
