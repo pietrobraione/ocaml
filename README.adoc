@@ -17,10 +17,8 @@ on the x86_64 and on the aarch64 versions of the operating system.
 
 == Maturity
 
-mu is sufficiently robust to bootstrap its own OCaml environment.
-Note however that, being based on a quite ancient version of OCaml,
-the native compiler ocamlopt currently does not build --- which is
-a non-issue, given the purpose of mu.
+mu is sufficiently robust to fully bootstrap its own OCaml
+environment and to pass all the tests in make tests, except one.
 
 == Building
 
