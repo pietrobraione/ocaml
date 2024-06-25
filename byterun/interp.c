@@ -194,7 +194,7 @@ sp is a local copy of the global variable caml_extern_sp. */
 
 #define PossiblyJIT \
   { \
-    if (jit != 0 && code_fragment_under_exec->tgt_table[pc - code_fragment_under_exec->code_start] == 0 && code_fragment_under_exec->profile_counters[pc - code_fragment_under_exec->code_start] == HOT_LOOP_COUNT) { \
+    if (jit != 0 && code_fragment_under_exec->tgt_table[pc - code_fragment_under_exec->code_start] == 0 && code_fragment_under_exec->code_start <= saved_pc && saved_pc <= code_fragment_under_exec->code_end && pc <= saved_pc && code_fragment_under_exec->profile_counters[pc - code_fragment_under_exec->code_start] >= HOT_LOOP_COUNT) { \
       jit_compile(code_fragment_under_exec, pc - code_fragment_under_exec->code_start, saved_pc - code_fragment_under_exec->code_start); \
     } \
   }
@@ -843,17 +843,21 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
 
     Instruct(APPLY): {
       ++pc;
+      SavePC;
       extra_args = *pc - 1;
       pc = Code_val(accu);
       Set_current_code_fragment;
       env = accu;
       Check_stacks;
+      Profile;
     InstructEnd(APPLY):
+      PossiblyJIT;
       Next;
     }
 
     Instruct(APPLY1): {
       ++pc;
+      SavePC;
       value arg1 = sp[0];
       sp -= 3;
       sp[0] = arg1;
@@ -865,12 +869,15 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       env = accu;
       extra_args = 0;
       Check_stacks;
+      Profile;
     InstructEnd(APPLY1):
+      PossiblyJIT;
       Next;
     }
 
     Instruct(APPLY2): {
       ++pc;
+      SavePC;
       value arg1 = sp[0];
       value arg2 = sp[1];
       sp -= 3;
@@ -884,12 +891,15 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       env = accu;
       extra_args = 1;
       Check_stacks;
+      Profile;
     InstructEnd(APPLY2):
+      PossiblyJIT;
       Next;
     }
 
     Instruct(APPLY3): {
       ++pc;
+      SavePC;
       value arg1 = sp[0];
       value arg2 = sp[1];
       value arg3 = sp[2];
@@ -905,12 +915,15 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       env = accu;
       extra_args = 2;
       Check_stacks;
+      Profile;
     InstructEnd(APPLY3):
+      PossiblyJIT;
       Next;
     }
 
     Instruct(APPTERM): {
       ++pc;
+      SavePC;
       int nargs = *pc++;
       int slotsize = *pc;
       value * newsp;
@@ -925,12 +938,15 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       env = accu;
       extra_args += nargs - 1;
       Check_stacks;
+      Profile;
     InstructEnd(APPTERM):
+      PossiblyJIT;
       Next;
     }
 
     Instruct(APPTERM1): {
       ++pc;
+      SavePC;
       value arg1 = sp[0];
       sp = sp + *pc - 1;
       sp[0] = arg1;
@@ -938,12 +954,15 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       Set_current_code_fragment;
       env = accu;
       Check_stacks;
+      Profile;
     InstructEnd(APPTERM1):
+      PossiblyJIT;
       Next;
     }
 
     Instruct(APPTERM2): {
       ++pc;
+      SavePC;
       value arg1 = sp[0];
       value arg2 = sp[1];
       sp = sp + *pc - 2;
@@ -954,12 +973,15 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       env = accu;
       extra_args += 1;
       Check_stacks;
+      Profile;
     InstructEnd(APPTERM2):
+      PossiblyJIT;
       Next;
     }
 
     Instruct(APPTERM3): {
       ++pc;
+      SavePC;
       value arg1 = sp[0];
       value arg2 = sp[1];
       value arg3 = sp[2];
@@ -972,7 +994,9 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
       env = accu;
       extra_args += 2;
       Check_stacks;
+      Profile;
     InstructEnd(APPTERM3):
+      PossiblyJIT;
       Next;
     }
 
