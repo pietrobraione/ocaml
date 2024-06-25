@@ -1,5 +1,8 @@
 = mu: An experimental JIT compiler for OCaml =
 image::Enso.svg[]
+ifdef::env-github[]
+:imagesdir: https://raw.githubusercontent.com/pietrobraione/ocaml/trunk/
+endif::[]
 
 == Overview
 
