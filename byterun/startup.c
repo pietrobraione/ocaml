@@ -356,19 +356,19 @@ CAMLexport void caml_main(char **argv)
   caml_code_size = caml_seek_section(fd, &trail, "CODE");
   caml_load_code(fd, caml_code_size);
 #ifdef THREADED_CODE
-#if 1
-  /* compile before threading */
   asize_t caml_code_len = caml_code_size / sizeof(opcode_t);
   struct jit_context ctx = JIT_CONTEXT_INIT();
   struct jit_fragment *fgm = jit_fragment_add(&ctx, caml_start_code, caml_start_code + caml_code_len);
-  if (!caml_debugger_in_use) {
-    jit_compile(fgm, 0, caml_code_len);
-  }
-#endif
   /* Better to thread now than at the beginning of [caml_interprete],
      since the debugger interface needs to perform SET_EVENT requests
      on the code. */
   caml_thread_code(caml_start_code, caml_code_size);
+#if 1
+  /* compile the whole bytecode -- TO BE REMOVED */
+  if (!caml_debugger_in_use) {
+    jit_compile(fgm, 0, caml_code_len);
+  }
+#endif
 #endif
   caml_init_debug_info();
   /* Build the table of primitives */

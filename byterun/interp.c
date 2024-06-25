@@ -1915,8 +1915,11 @@ void caml_prepare_bytecode(code_t prog, asize_t prog_size) {
   asize_t prog_len = prog_size / sizeof(opcode_t);
   struct jit_fragment *fgm = jit_fragment_add(jit_ctx, prog, prog + prog_len);
 #ifdef THREADED_CODE
-  jit_compile(fgm, 0, prog_len);
   caml_thread_code(prog, prog_size);
+#if 1
+  /* compile the whole bytecode -- TO BE REMOVED */
+  jit_compile(fgm, 0, prog_len);
+#endif
 #endif
 }
 

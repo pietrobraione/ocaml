@@ -84,12 +84,10 @@ struct jit_fragment *jit_fragment_add(struct jit_context *ctx, code_t code_start
   }
 
   asize_t code_len = code_end - code_start;
-#ifdef DUMP_JIT_OPCODES
   /* stores a copy of the code */
   asize_t code_size = code_len * sizeof(opcode_t);
   fgm->code_copy = caml_stat_alloc(code_size);
   memcpy(fgm->code_copy, code_start, code_size);
-#endif
   fgm->code_start = code_start;
   fgm->code_end = code_end;
   fgm->tgt_table = caml_stat_alloc(code_len * sizeof(void *));
@@ -155,7 +153,7 @@ void jit_compile(struct jit_fragment *fgm, asize_t code_region_start, asize_t co
    * same times fills the target table
    */
   int compiled_code_size = 0;
-  code_t code = fgm->code_start;
+  code_t code = fgm->code_copy;
   unsigned char *to = code_buffer;
   unsigned long long ofst;
   for (ofst = code_region_start; ofst < code_region_end; ofst += bytecode_size(code, ofst)) {
