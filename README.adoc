@@ -26,7 +26,7 @@ mu comes as a modified version of the OCaml environment version 4.05.0.
 Building mu is just a matter of
 
     $ ./configure
-    $ make world
+    $ make world.opt
 
 This will build the whole OCaml environment, including the modified
 ocamlrun interpreter, that contains the JIT compiler.
