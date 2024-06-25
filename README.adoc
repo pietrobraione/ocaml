@@ -6,7 +6,7 @@ image::https://upload.wikimedia.org/wikipedia/commons/6/68/Enso.svg[Enso,200]
 
 mu is an implementation of a template JIT compiler integrated
 in the OCaml interpreter. It aims at showing that an (almost)
-zero assembly approach to implementing simple but expedient
+zero-assembly approach to implementing simple but still useful
 JIT compilers is feasible and desirable. mu is a proof-of-concept
 and is *not* meant for production use.
 
