@@ -180,6 +180,25 @@ sp is a local copy of the global variable caml_extern_sp. */
     pc = (code_t) sp[3]; env = sp[4]; extra_args = Long_val(sp[5]); \
     sp += 6; }
 
+/* JIT interface */
+#define SavePC { saved_pc = pc; }
+
+#define Profile \
+  { \
+    if (jit != 0 && pc < saved_pc /* back edge */ && code_fragment_under_exec->tgt_table[pc - code_fragment_under_exec->code_start] == 0 /* not yet jitted */) { \
+      ++code_fragment_under_exec->profile_counters[pc - code_fragment_under_exec->code_start]; \
+    } \
+  }
+
+#define HOT_LOOP_COUNT 1000
+
+#define PossiblyJIT \
+  { \
+    if (jit != 0 && code_fragment_under_exec->tgt_table[pc - code_fragment_under_exec->code_start] == 0 && code_fragment_under_exec->profile_counters[pc - code_fragment_under_exec->code_start] == HOT_LOOP_COUNT) { \
+      jit_compile(code_fragment_under_exec, pc - code_fragment_under_exec->code_start, saved_pc - code_fragment_under_exec->code_start); \
+    } \
+  }
+
 /* Debugger interface */
 
 #define Setup_for_debugger \
@@ -1412,20 +1431,29 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
 
     Instruct(BRANCH):
       ++pc;
+      SavePC;
       pc += *pc;
+      Profile;
     InstructEnd(BRANCH):
+      PossiblyJIT;
       Next;
 
     Instruct(BRANCHIF):
       ++pc;
+      SavePC;
       if (accu != Val_false) pc += *pc; else pc++;
+      Profile;
     InstructEnd(BRANCHIF):
+      PossiblyJIT;
       Next;
 
     Instruct(BRANCHIFNOT):
       ++pc;
+      SavePC;
       if (accu == Val_false) pc += *pc; else pc++;
+      Profile;
     InstructEnd(BRANCHIFNOT):
+      PossiblyJIT;
       Next;
 
     Instruct(SWITCH): {
@@ -1762,12 +1790,15 @@ value caml_interprete(code_t prog, asize_t prog_size, struct jit_context *jit)
 #define Integer_branch_comparison(typ,opname,tst,debug) \
     Instruct(opname): \
       ++pc; \
+      SavePC; \
       if ( *pc++ tst (typ) Long_val(accu)) { \
         pc += *pc ; \
       } else { \
         pc++ ; \
       } ; \
+      Profile; \
     InstructEnd(opname): \
+      PossiblyJIT; \
       Next;
 
     Integer_branch_comparison(intnat,BEQ, ==, "==")
@@ -1913,12 +1944,15 @@ void caml_prepare_bytecode(code_t prog, asize_t prog_size) {
   Assert(prog_size>0);
 
   asize_t prog_len = prog_size / sizeof(opcode_t);
-  struct jit_fragment *fgm = jit_fragment_add(jit_ctx, prog, prog + prog_len);
 #ifdef THREADED_CODE
+#if 0
+  struct jit_fragment *fgm = jit_fragment_add(jit_ctx, prog, prog + prog_len);
   caml_thread_code(prog, prog_size);
-#if 1
-  /* compile the whole bytecode -- TO BE REMOVED */
+  /* compile the whole bytecode fragment -- TO BE REMOVED */
   jit_compile(fgm, 0, prog_len);
+#else
+  jit_fragment_add(jit_ctx, prog, prog + prog_len);
+  caml_thread_code(prog, prog_size);
 #endif
 #endif
 }

@@ -93,6 +93,8 @@ struct jit_fragment *jit_fragment_add(struct jit_context *ctx, code_t code_start
   fgm->tgt_table = caml_stat_alloc(code_len * sizeof(void *));
   int i;
   for (i = 0; i < code_len; ++i) fgm->tgt_table[i] = 0;
+  fgm->profile_counters = caml_stat_alloc(code_len * sizeof(asize_t));
+  for (i = 0; i < code_len; ++i) fgm->profile_counters[i] = 0;
   caml_ext_table_init(&(fgm->binary_roots), 10);
   fgm->next = 0;
 
@@ -104,6 +106,7 @@ void jit_fragment_remove(struct jit_context *ctx, code_t code_start, code_t code
   for (prev = 0, cur = ctx->first; cur != 0; prev = cur, cur = cur->next) {
     if (cur->code_start == code_start && cur->code_end == code_end) {
       caml_stat_free(cur->tgt_table);
+      caml_stat_free(cur->profile_counters);
       int i;
       for (i = 0; i < cur->binary_roots.size; ++i) {
         struct binary_root *r = (struct binary_root *) cur->binary_roots.contents[i];

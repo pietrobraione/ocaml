@@ -43,6 +43,7 @@ struct jit_fragment {
   code_t code_start;
   code_t code_end;
   void* *tgt_table;
+  asize_t *profile_counters;
   struct ext_table binary_roots; /* ext_table of struct binary_root* */
   struct jit_fragment *next;
 };
