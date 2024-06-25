@@ -1,4 +1,5 @@
-= mu: An Experimental JIT compiler for OCaml =
+= mu: An experimental JIT compiler for OCaml =
+image::Enso.svg[]
 
 == Overview
 
@@ -15,7 +16,7 @@ on the x86_64 and on the aarch64 versions of the operating system.
 
 == Maturity
 
-mu is sufficiently robust to bootstrap it own OCaml environment.
+mu is sufficiently robust to bootstrap its own OCaml environment.
 Note however that, being based on a quite ancient version of OCaml,
 the native compiler ocamlopt currently does not build --- which is
 a non-issue, given the purpose of mu.
@@ -29,7 +30,7 @@ Building mu is just a matter of
     $ make world
 
 This will build the whole OCaml environment, including the modified
-ocamlrun interpreter, that contains the jit.
+ocamlrun interpreter, that contains the JIT compiler.
 
 == Installing and running
 
