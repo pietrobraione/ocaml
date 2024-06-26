@@ -99,3 +99,5 @@ int caml_set_signal_action(int signo, int action)
   else
     return 0;
 }
+
+CAMLexport int caml_setup_stack_overflow_detection(void) { return 0; }
