@@ -42,6 +42,7 @@ void caml_record_signal(int signal_number);
 void caml_process_pending_signals(void);
 void caml_process_event(void);
 int caml_set_signal_action(int signo, int action);
+CAMLextern int caml_setup_stack_overflow_detection(void);
 
 CAMLextern void (*caml_enter_blocking_section_hook)(void);
 CAMLextern void (*caml_leave_blocking_section_hook)(void);
