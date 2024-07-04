@@ -115,7 +115,7 @@ prims.c : primitives
 	 echo 'typedef value (*c_primitive)(void);'; \
 	 echo; \
 	 sed -e 's/.*/extern value &(void);/' $<; \
-	 echo; \ 
+	 echo; \
 	 echo 'c_primitive caml_builtin_cprim[] = {'; \
 	 sed -e 's/.*/  &,/' $<; \
 	 echo '  0 };'; \
