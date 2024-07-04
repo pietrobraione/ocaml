@@ -20,6 +20,8 @@
 
 #include "config.h"
 
+extern header_t caml_atom_table[256];
+
 extern void caml_init_atom_table (void);
 
 extern uintnat caml_init_percent_free;
