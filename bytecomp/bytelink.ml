@@ -475,8 +475,7 @@ let link_bytecode_as_c ppf tolink outfile =
 \n           char **argv);\n";
       List.iter (fun (f, _) -> Printf.fprintf outchan "\n#undef %s" f)
          guarded_primitives;
-       output_string outchan "\nstatic int caml_code[] = {\n";
-    output_string outchan "static int caml_code[] = {\n";
+    output_string outchan "\nstatic int caml_code[] = {\n";
     Symtable.init();
     clear_crc_interfaces ();
     let currpos = ref 0 in
