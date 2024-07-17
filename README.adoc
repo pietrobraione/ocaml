@@ -14,11 +14,13 @@ mu is a proof-of-concept and is *not* meant for production use.
 
 mu currently works only on Ubuntu Linux 22.04 LTS. It works both
 on the x86_64 and on the aarch64 versions of the operating system.
+It compiles with gcc and clang.
 
 == Maturity
 
 mu is sufficiently robust to fully bootstrap its own OCaml
-environment and to pass all the tests in make tests, except one.
+environment and to pass all the tests in the OCaml test suite,
+except one.
 
 == Building
 
@@ -40,6 +42,9 @@ and run it as follows:
 
     $ /home/me/ocaml/boot/ocamlrun /home/me/ocaml/boot/ocamlc -nostdlib -I /home/me/ocaml/stdlib ... fibonacci.ml
     $ /home/me/ocaml/boot/ocamlrun a.out
+
+If you want to run the interpreter alone (i.e., disable the JIT compiler)
+ocamlrun supports a -nojit option.
 
 == Studying the code
 
