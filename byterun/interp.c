@@ -221,7 +221,9 @@ sp is a local copy of the global variable caml_extern_sp. */
 #define Set_current_code_fragment \
   { \
     if (jit != 0) { \
-      code_fragment_under_exec = _F_jit_fragment_find(jit, pc); \
+      if (code_fragment_under_exec == 0 || code_fragment_under_exec->code_start > pc || pc >= code_fragment_under_exec->code_end) { \
+        code_fragment_under_exec = _F_jit_fragment_find(jit, pc); \
+      } \
       Assert (code_fragment_under_exec != 0); \
     } \
   }
