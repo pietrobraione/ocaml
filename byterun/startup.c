@@ -217,6 +217,8 @@ Algorithm:
 
 /* Parse options on the command line */
 
+int nojit = 0;
+
 static int parse_command_line(char **argv)
 {
   int i, j;
@@ -249,6 +251,11 @@ static int parse_command_line(char **argv)
       if (argv[i + 1] != NULL) {
         caml_ext_table_add(&caml_shared_libs_path, argv[i + 1]);
         i++;
+      }
+      break;
+    case 'n':
+      if (!strcmp (argv[i], "-nojit")){
+	nojit = 1;
       }
       break;
     default:
@@ -355,26 +362,14 @@ CAMLexport void caml_main(char **argv)
   /* Load the code */
   caml_code_size = caml_seek_section(fd, &trail, "CODE");
   caml_load_code(fd, caml_code_size);
-#ifdef THREADED_CODE
   asize_t caml_code_len = caml_code_size / sizeof(opcode_t);
   struct jit_context ctx = JIT_CONTEXT_INIT();
-#if 0
-  struct jit_fragment *fgm = jit_fragment_add(&ctx, caml_start_code, caml_start_code + caml_code_len);
-  /* Better to thread now than at the beginning of [caml_interprete],
-     since the debugger interface needs to perform SET_EVENT requests
-     on the code. */
-  caml_thread_code(caml_start_code, caml_code_size);
-  /* compile the whole bytecode fragment -- TO BE REMOVED */
-  if (!caml_debugger_in_use) {
-    jit_compile(fgm, 0, caml_code_len);
-  }
-#else
   jit_fragment_add(&ctx, caml_start_code, caml_start_code + caml_code_len);
+#ifdef THREADED_CODE
   /* Better to thread now than at the beginning of [caml_interprete],
      since the debugger interface needs to perform SET_EVENT requests
      on the code. */
   caml_thread_code(caml_start_code, caml_code_size);  
-#endif
 #endif
   caml_init_debug_info();
   /* Build the table of primitives */
@@ -404,11 +399,7 @@ CAMLexport void caml_main(char **argv)
 #endif
   /* Execute the program */
   caml_debugger(PROGRAM_START);
-#if 1
-  res = caml_interprete(caml_start_code, caml_code_size, (caml_debugger_in_use ? 0 : &ctx));
-#else
-  res = caml_interprete(caml_start_code, caml_code_size, 0);
-#endif
+  res = caml_interprete(caml_start_code, caml_code_size, ((nojit || caml_debugger_in_use) ? 0 : &ctx));
   if (Is_exception_result(res)) {
     caml_exn_bucket = Extract_exception(res);
     if (caml_debugger_in_use) {
@@ -470,8 +461,10 @@ CAMLexport void caml_startup_code(
     caml_saved_code = (unsigned char *) caml_stat_alloc(len);
     for (i = 0; i < len; i++) caml_saved_code[i] = caml_start_code[i];
   }
+  asize_t caml_code_len = code_size / sizeof(opcode_t);
+  struct jit_context ctx = JIT_CONTEXT_INIT();
+  jit_fragment_add(&ctx, caml_start_code, caml_start_code + caml_code_len);
 #ifdef THREADED_CODE
-  /* TODO jit */
   caml_thread_code(caml_start_code, code_size);
 #endif
   /* Use the builtin table of primitives */
@@ -489,7 +482,7 @@ CAMLexport void caml_startup_code(
   caml_stat_free(exe_name);
   /* Execute the program */
   caml_debugger(PROGRAM_START);
-  res = caml_interprete(caml_start_code, caml_code_size, 0);
+  res = caml_interprete(caml_start_code, caml_code_size, ((nojit || caml_debugger_in_use) ? 0 : &ctx));
   if (Is_exception_result(res)) {
     caml_exn_bucket = Extract_exception(res);
     if (caml_debugger_in_use) {
